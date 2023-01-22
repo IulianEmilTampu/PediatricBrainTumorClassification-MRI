@@ -26,18 +26,10 @@ from sklearn.model_selection import train_test_split
 from sklearn.model_selection import KFold
 from sklearn.utils.extmath import softmax
 
-# import torch
-# import torch.nn as nn
-# import torch.optim as optim
-# from torchvision import transforms, utils
-# from torch.utils.data import Dataset, DataLoader
-
 # local imports
 import utilities
 import data_utilities
 import models
-
-# import trainer
 
 su_debug_flag = True
 
@@ -61,6 +53,14 @@ if not su_debug_flag:
         required=True,
         type=str,
         help="Provide the Image Dataset Folder where the folders for each modality are located (see dataset specifications in the README file).",
+    )
+    parser.add_argument(
+        "-dt",
+        "--DATASET_TYPE",
+        required=False,
+        default="CBTN",
+        type=str,
+        help="Provide the image dataset type (BRATS, CBTN, CUSTOM). This will set the dataloader appropriate for the dataset.",
     )
     parser.add_argument(
         "-gpu",
@@ -109,6 +109,30 @@ if not su_debug_flag:
         default=300,
         help="Number of max training epochs.",
     )
+    parser.add_argument(
+        "-use_pretrained",
+        "--USE_PRETRAINED_MODEL",
+        required=False,
+        type=bool,
+        default=False,
+        help="Specify if the image encoder should be loading the weight pretrained on BraTS",
+    )
+    parser.add_argument(
+        "-path_to_pretrained_model",
+        "--PATH_TO_PRETRAINED_MODEL",
+        required=False,
+        type=str,
+        default=None,
+        help="Specify the path to the pretrained model to use as image encoder.",
+    )
+    parser.add_argument(
+        "-use_age",
+        "--USE_AGE",
+        required=False,
+        type=bool,
+        default=False,
+        help="Specify if the model should use the agen information. If true, the age information is encoded using a fuly connected model and feature fusion is used to combine image and age infromation.",
+    )
     # other parameters
     parser.add_argument(
         "-rns",
@@ -125,13 +149,17 @@ else:
     # # # # # # # # # # # # # # DEBUG
     args_dict = {
         "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/random_stuf/Extract_pngs_from_brats/transversal_BraTS2020",
+        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES",
+        "DATASET_TYPE": "CBTN",
         "GPU_NBR": "0",
-        "MODEL_NAME": "SDM4_t1_t2_BraTS_fullDataset_lr10em6_more_data",
+        "MODEL_NAME": "DetectionModel_SDM4_pretrained_BRATS_t1_t2_CBTN_lr10em4_batch_16",
         "NBR_FOLDS": 5,
-        "LEARNING_RATE": 0.000001,
+        "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 16,
         "MAX_EPOCHS": 50,
+        "USE_PRETRAINED_MODEL": True,
+        "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
+        "USE_AGE": False,
         "RANDOM_SEED_NUMBER": 29122009,
     }
 
@@ -161,25 +189,6 @@ else:
     Warning(
         f"ATTENTION!!! MODEL RUNNING ON CPU. Check implementation in case GPU is wanted."
     )
-
-
-# # check if cuda is available
-# if torch.cuda.is_available():
-#     # set device to the one specified
-#     print(f'Running training on GPU # {args_dict["GPU_NBR"]} \n')
-#     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-#     os.environ["CUDA_VISIBLE_DEVICES"] = args_dict["GPU_NBR"]
-#     DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-# elif torch.backends.mps.is_available():
-#     print(f'Running training on GPU # {args_dict["GPU_NBR"]} \n')
-#     DEVICE = "mps"
-# else:
-#     DEVICE = "cpu"
-#     Warning(
-#         f"ATTENTION!!! MODEL RUNNING ON CPU. Check implementation in case GPU is wanted."
-#     )
-# args_dict["DEVICE"] = DEVICE
-
 # -------------------------------------
 # Check that the given folder exist
 # -------------------------------------
@@ -213,7 +222,7 @@ if not su_debug_flag:
 # print input variables
 max_len = max([len(key) for key in args_dict])
 [print(f"{key:{max_len}s}: {value}") for key, value in args_dict.items()]
-
+# %% GET DATASET FILES
 print(f"Splitting dataset (per-volume (subject) splitting).")
 """
 Independently from the combination of modalities, the test validation and train sets
@@ -225,51 +234,174 @@ Steps
 3 - save the information about the split.
 """
 
-# ######### this it the default on
-# # get the unique subjects in the IMG_DATASET_FOLDER
-# # NOTE that the heuristic used to get the unique patient IDs might be changed depending on the dataset
-# all_file_names = glob.glob(os.path.join(args_dict["IMG_DATASET_FOLDER"], "*.jpeg"))
 
+def get_img_file_names(img_dataset_path: str, dataset_type: str, **kwargs):
+    """
+    Utility that gets the filenames of the images in the dataset along with the
+    unique subject IDs on which to apply the splitting.
+    The heuristics on how the filenames and the subjects IDs are obtained depends
+    on the dataset type, especially on how the images are storred and named.
+    This implementation can handle, for now, the BraTS dataset saved as slices
+    and the CBTN dataset saved as slices.
 
-# ################ THIS IS SPECIAL JUST TO MAKE IT WORK
-# get images from all the modalities for training
-all_file_names = []
-for modality in ["t1", "t2"]:
-    for s in ["slices_without_tumor_label_0", "slices_with_tumor_label_1"]:
-        files = glob.glob(
-            os.path.join(args_dict["IMG_DATASET_FOLDER"], modality, s, "*.jpeg")
-        )
-        if s == "slices_with_tumor_label_1":
-            # filter files with relative position of the tumor within [20, 80]
-            min_rlp = 20
-            max_rlp = 80
+    BraTS dataset structure:
+    - modality folder (t1, t1ce, t2, flair)
+        - slices_without_tumor_label_0 or slices_with_tumor_label_1
+            - slice name (BraTS20_Training_*subjectID*_*modality*_rlp_*relativePositionWrtTheTumor*_label_*label*.jpeg)
+    CBTN dataset structure:
+    - modality folder (t1, t2)
+        - *DIAGNOSIS*_*subjectID*_*scanID*_B_brain_*modality*_rlp_relativePositionWrtTheTumor_label_*0 or 1*.png
+
+    INPUT
+    img_dataset_path : str
+        Path to where the folders for each modality are located
+    dataset_type : str
+        Which dataset do the images belong to. This defines the heuristic on how to get the file names
+    **kwargs : optional argumets
+        modalities : list
+            List of modalities to include
+        task : str
+            Tumor detection (detection) or tumor tupe classification (classification). Specifies if the images with
+            no tumor shoul be included (detection) or excluded (classification)
+        tumor_min_rpl : int
+            Specifies the minimul relative position acceptable for inclusion in the case of a slice with tumor.
+            Value between 0 and 100, with 50 indicating the center of the tumor.
+        tumor_max_rpl : int
+            Specifies the maximum relative position acceptable for inclusion in the case of a slice with tumor
+            Value between 0 and 100, with 50 indicating the center of the tumor.
+        brain_min_rpl : int
+            Specifies the minimul relative position w.r.t the tumor acceptable for inclusion in the case of a slice without tumor.
+            Value between 1 and n, with n indicating the number of slices away from the closes tumor slice.
+        brain_max_rpl : int
+            Specifies the maximum relative position w.r.t the tumor acceptable for inclusion in the case of a slice without tumor.
+            Value between 1 and n, with n indicating the number of slices away from the closes tumor slice.
+
+    OUTPUT
+    all_file_names : list of tuples
+        Where the first element if the path to the file and the second element is the subjectID the imege belongs to
+    """
+
+    # check the optional arguments and initialize them if not present
+    # optional arguments
+    default_opt_args = {
+        "modalities": [
+            os.path.basename(f) for f in glob.glob(os.path.join(img_dataset_path, "*"))
+        ],
+        "task": "detection",
+        "tumor_min_rpl": 0,
+        "tumor_max_rpl": 100,
+        "brain_min_rpl": 1,
+        "brain_max_rpl": 25,
+    }
+
+    if not kwargs:
+        kwargs = default_opt_args
+    else:
+        for keys, values in default_opt_args.items():
+            if keys not in kwargs.keys():
+                kwargs[keys] = values
+
+    print(kwargs)
+
+    # initiate variables to be returned
+    all_file_names = []
+
+    # work on each dataset type
+    if dataset_type.upper() == "BRATS":
+        for modality in kwargs["modalities"]:
+            # specify if to include slices without tumor
+            if kwargs["task"].lower() == "detection":
+                classes = ["slices_without_tumor_label_0", "slices_with_tumor_label_1"]
+            elif kwargs["task"].lower() == "classification":
+                classes = ["slices_with_tumor_label_1"]
+
+            for s in classes:
+                files = glob.glob(os.path.join(img_dataset_path, modality, s, "*.jpeg"))
+                if s == "slices_with_tumor_label_1":
+                    # filter files with relative position of the tumor
+                    files = [
+                        (f, int(os.path.basename(f).split("_")[2]))
+                        for f in files
+                        if all(
+                            [
+                                float(os.path.basename(f).split("_")[5])
+                                >= kwargs["tumor_min_rpl"],
+                                float(os.path.basename(f).split("_")[5])
+                                <= kwargs["tumor_max_rpl"],
+                            ]
+                        )
+                    ]
+                if s == "slices_without_tumor_label_0":
+                    # filter files with relative position of the tumor within [20, 80]
+                    files = [
+                        (f, int(os.path.basename(f).split("_")[2]))
+                        for f in files
+                        if all(
+                            [
+                                float(os.path.basename(f).split("_")[5])
+                                >= kwargs["brain_min_rpl"],
+                                float(os.path.basename(f).split("_")[5])
+                                <= kwargs["brain_max_rpl"],
+                            ]
+                        )
+                    ]
+                all_file_names.extend(files)
+
+    if dataset_type.upper() == "CBTN":
+        for modality in kwargs["modalities"]:
+            # work on the images with tumor
+            files = glob.glob(os.path.join(img_dataset_path, modality, "*label_1.png"))
+            # filter files with relative position of the tumor
             files = [
-                (f, int(os.path.basename(f).split("_")[2]))
+                (f, os.path.basename(f).split("_")[1])
                 for f in files
                 if all(
                     [
-                        float(os.path.basename(f).split("_")[5]) >= min_rlp,
-                        float(os.path.basename(f).split("_")[5]) <= max_rlp,
+                        float(os.path.basename(f).split("_")[-3])
+                        >= kwargs["tumor_min_rpl"],
+                        float(os.path.basename(f).split("_")[-3])
+                        <= kwargs["tumor_max_rpl"],
                     ]
                 )
             ]
-        if s == "slices_without_tumor_label_0":
-            # filter files with relative position of the tumor within [20, 80]
-            min_rlp = 1
-            max_rlp = 25
-            files = [
-                (f, int(os.path.basename(f).split("_")[2]))
-                for f in files
-                if all(
-                    [
-                        float(os.path.basename(f).split("_")[5]) >= min_rlp,
-                        float(os.path.basename(f).split("_")[5]) <= max_rlp,
-                    ]
+            all_file_names.extend(files)
+            # add the files without tumor if detection
+            if kwargs["task"].lower() == "detection":
+                files = glob.glob(
+                    os.path.join(img_dataset_path, modality, "*label_0.png")
                 )
-            ]
-        all_file_names.extend(files)
+                files = [
+                    (f, os.path.basename(f).split("_")[1])
+                    for f in files
+                    if all(
+                        [
+                            float(os.path.basename(f).split("_")[-3])
+                            >= kwargs["brain_min_rpl"],
+                            float(os.path.basename(f).split("_")[-3])
+                            <= kwargs["brain_max_rpl"],
+                        ]
+                    )
+                ]
+                all_file_names.extend(files)
 
-random.shuffle(all_file_names)
+    return all_file_names
+
+
+# # ######### this it the default on
+# # # get the unique subjects in the IMG_DATASET_FOLDER
+# # # NOTE that the heuristic used to get the unique patient IDs might be changed depending on the dataset type
+
+all_file_names = get_img_file_names(
+    img_dataset_path=args_dict["IMG_DATASET_FOLDER"],
+    dataset_type="CBTN",
+    modalities=["T2"],
+    task="detection",
+    tumor_min_rpl=0,
+    tumor_max_rpl=100,
+    brain_min_rpl=1,
+    brain_max_rpl=25,
+)
+
 unique_patien_IDs = list(dict.fromkeys(f[1] for f in all_file_names))
 
 ######### DEBUG
@@ -381,6 +513,15 @@ with open(
 print(
     f"Training files:{len(per_fold_training_files[-1])}\nValidation files: {len(per_fold_validation_files[-1])}"
 )
+# %% test genrators
+importlib.reload(data_utilities)
+target_size = (224, 224)
+gen = data_utilities.get_data_generator_TF_CBTN(
+    sample_files=test_files,
+    target_size=target_size,
+    batch_size=args_dict["BATCH_SIZE"],
+    dataset_type="training",
+)
 # %%
 # ---------
 # RUNIING CROSS VALIDATION TRAINING
@@ -421,6 +562,24 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         dataset_type="testing",
     )
+    # train_gen = data_utilities.get_data_generator_TF_CBTN(
+    #     sample_files=per_fold_training_files[cv_f],
+    #     target_size=target_size,
+    #     batch_size=args_dict["BATCH_SIZE"],
+    #     dataset_type="training",
+    # )
+    # val_gen = data_utilities.get_data_generator_TF_CBTN(
+    #     sample_files=per_fold_validation_files[cv_f],
+    #     target_size=target_size,
+    #     batch_size=args_dict["BATCH_SIZE"],
+    #     dataset_type="validation",
+    # )
+    # test_gen = data_utilities.get_data_generator_TF_CBTN(
+    #     sample_files=test_files,
+    #     target_size=target_size,
+    #     batch_size=args_dict["BATCH_SIZE"],
+    #     dataset_type="testing",
+    # )
 
     print(
         f"Training: {len(train_gen)}\nValidation: {len(val_gen)}\nTesting: {len(test_gen)}"
@@ -428,16 +587,27 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
 
     ## BUILD DETERCTION MODEL
     importlib.reload(models)
-    print(f'{" "*3}Building model ...')
-    # build custom model (WHAT HAS BEEN USED IN THE qMRI PROJECT)
-    model = models.SimpleDetectionModel_TF(
-        num_classes=2,
-        input_shape=(224, 224, 1),
-        class_weights=None,
-        kernel_size=(3, 3),
-        pool_size=(2, 2),
-        model_name="SimpleDetectionModel",
-    )
+    if args_dict["USE_PRETRAINED_MODEL"]:
+        print(f'{" "*3}Loading pretrained model...')
+        # load model
+        model = tf.keras.models.load_model(args_dict["PATH_TO_PRETRAINED_MODEL"])
+        # replace the last dense layer to match the number of classes
+        intermediat_output = model.layers[-2].output
+        new_output = tf.keras.layers.Dense(
+            units=3, input_shape=model.layers[-1].input_shape, name="prediction"
+        )(intermediat_output)
+        model = tf.keras.Model(inputs=model.inputs, outputs=new_output)
+    else:
+        print(f'{" "*3}Building model from scratch...')
+        # build custom model (WHAT HAS BEEN USED IN THE qMRI PROJECT)
+        model = models.SimpleDetectionModel_TF(
+            num_classes=2,
+            input_shape=(224, 224, 1),
+            class_weights=None,
+            kernel_size=(3, 3),
+            pool_size=(2, 2),
+            model_name="SimpleDetectionModel",
+        )
 
     ## COMPILE MODEL
     learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
@@ -446,7 +616,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     optimizer = tf.keras.optimizers.Adam(learning_rate=args_dict["LEARNING_RATE"])
     optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
 
-    loss = tf.keras.losses.BinaryCrossentropy()
+    loss = tf.keras.losses.CategoricalCrossentropy()
 
     model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
 

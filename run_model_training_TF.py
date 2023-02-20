@@ -10,6 +10,9 @@ Steps
 4 - save model
 """
 import os
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+
 import glob
 import csv
 import json
@@ -19,6 +22,7 @@ import importlib
 import logging
 import random
 from pathlib import Path
+from distutils.util import strtobool
 
 from matplotlib import pyplot as plt
 
@@ -30,8 +34,10 @@ from sklearn.utils.extmath import softmax
 import utilities
 import data_utilities
 import models
+import losses
+import tf_callbacks
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -74,8 +80,16 @@ if not su_debug_flag:
         "--MODEL_NAME",
         required=False,
         type=str,
-        default="myModel",
+        default="MICCAI2023",
         help="Name used to save the model and the scores",
+    )
+    parser.add_argument(
+        "-n_classes",
+        "--NBR_CLASSES",
+        required=False,
+        type=int,
+        default=2,
+        help="Number of classification classes.",
     )
     parser.add_argument(
         "-n_folds",
@@ -113,8 +127,8 @@ if not su_debug_flag:
         "-use_pretrained",
         "--USE_PRETRAINED_MODEL",
         required=False,
-        type=bool,
-        default=False,
+        dest="USE_PRETRAINED_MODEL",
+        type=lambda x: bool(strtobool(x)),
         help="Specify if the image encoder should be loading the weight pretrained on BraTS",
     )
     parser.add_argument(
@@ -129,9 +143,68 @@ if not su_debug_flag:
         "-use_age",
         "--USE_AGE",
         required=False,
-        type=bool,
+        dest="USE_AGE",
+        type=lambda x: bool(strtobool(x)),
         default=False,
-        help="Specify if the model should use the agen information. If true, the age information is encoded using a fuly connected model and feature fusion is used to combine image and age infromation.",
+        help="Specify if the model should use the age information. If true, the age information is encoded using a fuly connected model and feature fusion is used to combine image and age infromation.",
+    )
+    parser.add_argument(
+        "-use_gradCAM",
+        "--USE_GRADCAM",
+        required=False,
+        dest="USE_GRADCAM",
+        type=lambda x: bool(strtobool(x)),
+        default=False,
+        help="Specify if the model should use the gradCAM information. If true, the gradCAM infromation is concatenated to the image information as an extra channel",
+    )
+    parser.add_argument(
+        "-loss",
+        "--LOSS",
+        required=False,
+        type=str,
+        default="CCE",
+        help="Specify loss to use during model training (categorical cross entropy CCE, MCC, binary categorical cross entropy BCE. Other can be defined and used. Just implement.",
+    )
+    parser.add_argument(
+        "-mr_modelities",
+        "--MR_MODALITIES",
+        nargs="+",
+        required=False,
+        default=["T2"],
+        help="Specify which MR modalities to use during training (T1 and/or T2)",
+    )
+    parser.add_argument(
+        "-debug_dataset_fraction",
+        "--DEBUG_DATASET_FRACTION",
+        required=False,
+        type=float,
+        default=1.0,
+        help="Specify the percentage of the dataset to use during training and validation. This is for debug",
+    )
+    parser.add_argument(
+        "-trf_data",
+        "--TFR_DATA",
+        required=False,
+        dest="TFR_DATA",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        help="Specify if the dataset used for training originates from TFRecord files. This is used to choose between data generators.",
+    )
+    parser.add_argument(
+        "-model_type",
+        "--MODEL_TYPE",
+        required=False,
+        type=str,
+        default="SDM4",
+        help="Specify model to use during training. Chose among the ones available in the models.py file.",
+    )
+    parser.add_argument(
+        "-optimizer",
+        "--OPTIMIZER",
+        required=False,
+        type=str,
+        default="SGD",
+        help="Specify which optimizer to use. Here one can set SGD or ADAM. Others can be implemented.",
     )
     # other parameters
     parser.add_argument(
@@ -149,19 +222,32 @@ else:
     # # # # # # # # # # # # # # DEBUG
     args_dict = {
         "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES",
+        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR",
         "DATASET_TYPE": "CBTN",
+        "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "MODEL_NAME": "DetectionModel_SDM4_pretrained_BRATS_t1_t2_CBTN_lr10em4_batch_16",
-        "NBR_FOLDS": 5,
-        "LEARNING_RATE": 0.0001,
-        "BATCH_SIZE": 16,
-        "MAX_EPOCHS": 50,
-        "USE_PRETRAINED_MODEL": True,
+        "NBR_FOLDS": 3,
+        "LEARNING_RATE": 0.00001,
+        "BATCH_SIZE": 32,
+        "MAX_EPOCHS": 100,
+        "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
         "USE_AGE": False,
+        "USE_GRADCAM": False,
+        "LOSS": "CCE",
         "RANDOM_SEED_NUMBER": 29122009,
+        "MR_MODALITIES": ["T2"],
+        "DEBUG_DATASET_FRACTION": 1,
+        "TFR_DATA": True,
+        "MODEL_TYPE": "ViT",
+        "MODEL_NAME": "ClassificationnModel",
+        "OPTIMIZER": "ADAM",
     }
+
+# revise model name
+args_dict[
+    "MODEL_NAME"
+] = f'{args_dict["MODEL_NAME"]}_optm_{args_dict["OPTIMIZER"]}_{args_dict["MODEL_TYPE"]}_TFRdata_{args_dict["TFR_DATA"]}_modality_{"_".join([i for i in args_dict["MR_MODALITIES"]])}_loss_{args_dict["LOSS"]}_lr_{args_dict["LEARNING_RATE"]}_batchSize_{args_dict["BATCH_SIZE"]}_pretrained_{args_dict["USE_PRETRAINED_MODEL"]}_useAge_{args_dict["USE_AGE"]}_useGradCAM_{args_dict["USE_GRADCAM"]}'
 
 # --------------------------------------
 # set GPU (or device)
@@ -169,6 +255,7 @@ else:
 
 # import tensorflow
 import tensorflow as tf
+import tensorflow_addons as tfa
 import warnings
 
 tf.get_logger().setLevel(logging.ERROR)
@@ -213,15 +300,9 @@ args_dict["SAVE_PATH"] = os.path.join(
 )
 Path(args_dict["SAVE_PATH"]).mkdir(parents=True, exist_ok=True)
 
-
-if not su_debug_flag:
-    # save training configuration
-    with open(os.path.join(args_dict["SAVE_PATH"], "config.json"), "w") as config_file:
-        config_file.write(json.dumps(args_dict))
-
 # print input variables
 max_len = max([len(key) for key in args_dict])
-[print(f"{key:{max_len}s}: {value}") for key, value in args_dict.items()]
+[print(f"{key:{max_len}s}{type(value)}: {value}") for key, value in args_dict.items()]
 # %% GET DATASET FILES
 print(f"Splitting dataset (per-volume (subject) splitting).")
 """
@@ -233,192 +314,53 @@ Steps
     are used for training, validation and testing
 3 - save the information about the split.
 """
+importlib.reload(data_utilities)
 
-
-def get_img_file_names(img_dataset_path: str, dataset_type: str, **kwargs):
-    """
-    Utility that gets the filenames of the images in the dataset along with the
-    unique subject IDs on which to apply the splitting.
-    The heuristics on how the filenames and the subjects IDs are obtained depends
-    on the dataset type, especially on how the images are storred and named.
-    This implementation can handle, for now, the BraTS dataset saved as slices
-    and the CBTN dataset saved as slices.
-
-    BraTS dataset structure:
-    - modality folder (t1, t1ce, t2, flair)
-        - slices_without_tumor_label_0 or slices_with_tumor_label_1
-            - slice name (BraTS20_Training_*subjectID*_*modality*_rlp_*relativePositionWrtTheTumor*_label_*label*.jpeg)
-    CBTN dataset structure:
-    - modality folder (t1, t2)
-        - *DIAGNOSIS*_*subjectID*_*scanID*_B_brain_*modality*_rlp_relativePositionWrtTheTumor_label_*0 or 1*.png
-
-    INPUT
-    img_dataset_path : str
-        Path to where the folders for each modality are located
-    dataset_type : str
-        Which dataset do the images belong to. This defines the heuristic on how to get the file names
-    **kwargs : optional argumets
-        modalities : list
-            List of modalities to include
-        task : str
-            Tumor detection (detection) or tumor tupe classification (classification). Specifies if the images with
-            no tumor shoul be included (detection) or excluded (classification)
-        tumor_min_rpl : int
-            Specifies the minimul relative position acceptable for inclusion in the case of a slice with tumor.
-            Value between 0 and 100, with 50 indicating the center of the tumor.
-        tumor_max_rpl : int
-            Specifies the maximum relative position acceptable for inclusion in the case of a slice with tumor
-            Value between 0 and 100, with 50 indicating the center of the tumor.
-        brain_min_rpl : int
-            Specifies the minimul relative position w.r.t the tumor acceptable for inclusion in the case of a slice without tumor.
-            Value between 1 and n, with n indicating the number of slices away from the closes tumor slice.
-        brain_max_rpl : int
-            Specifies the maximum relative position w.r.t the tumor acceptable for inclusion in the case of a slice without tumor.
-            Value between 1 and n, with n indicating the number of slices away from the closes tumor slice.
-
-    OUTPUT
-    all_file_names : list of tuples
-        Where the first element if the path to the file and the second element is the subjectID the imege belongs to
-    """
-
-    # check the optional arguments and initialize them if not present
-    # optional arguments
-    default_opt_args = {
-        "modalities": [
-            os.path.basename(f) for f in glob.glob(os.path.join(img_dataset_path, "*"))
-        ],
-        "task": "detection",
-        "tumor_min_rpl": 0,
-        "tumor_max_rpl": 100,
-        "brain_min_rpl": 1,
-        "brain_max_rpl": 25,
-    }
-
-    if not kwargs:
-        kwargs = default_opt_args
-    else:
-        for keys, values in default_opt_args.items():
-            if keys not in kwargs.keys():
-                kwargs[keys] = values
-
-    print(kwargs)
-
-    # initiate variables to be returned
-    all_file_names = []
-
-    # work on each dataset type
-    if dataset_type.upper() == "BRATS":
-        for modality in kwargs["modalities"]:
-            # specify if to include slices without tumor
-            if kwargs["task"].lower() == "detection":
-                classes = ["slices_without_tumor_label_0", "slices_with_tumor_label_1"]
-            elif kwargs["task"].lower() == "classification":
-                classes = ["slices_with_tumor_label_1"]
-
-            for s in classes:
-                files = glob.glob(os.path.join(img_dataset_path, modality, s, "*.jpeg"))
-                if s == "slices_with_tumor_label_1":
-                    # filter files with relative position of the tumor
-                    files = [
-                        (f, int(os.path.basename(f).split("_")[2]))
-                        for f in files
-                        if all(
-                            [
-                                float(os.path.basename(f).split("_")[5])
-                                >= kwargs["tumor_min_rpl"],
-                                float(os.path.basename(f).split("_")[5])
-                                <= kwargs["tumor_max_rpl"],
-                            ]
-                        )
-                    ]
-                if s == "slices_without_tumor_label_0":
-                    # filter files with relative position of the tumor within [20, 80]
-                    files = [
-                        (f, int(os.path.basename(f).split("_")[2]))
-                        for f in files
-                        if all(
-                            [
-                                float(os.path.basename(f).split("_")[5])
-                                >= kwargs["brain_min_rpl"],
-                                float(os.path.basename(f).split("_")[5])
-                                <= kwargs["brain_max_rpl"],
-                            ]
-                        )
-                    ]
-                all_file_names.extend(files)
-
-    if dataset_type.upper() == "CBTN":
-        for modality in kwargs["modalities"]:
-            # work on the images with tumor
-            files = glob.glob(os.path.join(img_dataset_path, modality, "*label_1.png"))
-            # filter files with relative position of the tumor
-            files = [
-                (f, os.path.basename(f).split("_")[1])
-                for f in files
-                if all(
-                    [
-                        float(os.path.basename(f).split("_")[-3])
-                        >= kwargs["tumor_min_rpl"],
-                        float(os.path.basename(f).split("_")[-3])
-                        <= kwargs["tumor_max_rpl"],
-                    ]
-                )
-            ]
-            all_file_names.extend(files)
-            # add the files without tumor if detection
-            if kwargs["task"].lower() == "detection":
-                files = glob.glob(
-                    os.path.join(img_dataset_path, modality, "*label_0.png")
-                )
-                files = [
-                    (f, os.path.basename(f).split("_")[1])
-                    for f in files
-                    if all(
-                        [
-                            float(os.path.basename(f).split("_")[-3])
-                            >= kwargs["brain_min_rpl"],
-                            float(os.path.basename(f).split("_")[-3])
-                            <= kwargs["brain_max_rpl"],
-                        ]
-                    )
-                ]
-                all_file_names.extend(files)
-
-    return all_file_names
-
-
-# # ######### this it the default on
-# # # get the unique subjects in the IMG_DATASET_FOLDER
-# # # NOTE that the heuristic used to get the unique patient IDs might be changed depending on the dataset type
-
-all_file_names = get_img_file_names(
+all_file_names = data_utilities.get_img_file_names(
     img_dataset_path=args_dict["IMG_DATASET_FOLDER"],
     dataset_type="CBTN",
-    modalities=["T2"],
-    task="detection",
+    modalities=args_dict["MR_MODALITIES"],
+    return_labels=True,
+    task="detection" if args_dict["NBR_CLASSES"] == 2 else "classification",
+    nbr_classes=args_dict["NBR_CLASSES"],
     tumor_min_rpl=0,
     tumor_max_rpl=100,
     brain_min_rpl=1,
     brain_max_rpl=25,
+    file_format="tfrecords",
 )
 
-unique_patien_IDs = list(dict.fromkeys(f[1] for f in all_file_names))
+unique_patien_IDs_with_labels = list(
+    dict.fromkeys([(f[1], f[2]) for f in all_file_names])
+)
+unique_patien_IDs_labels = [f[1] for f in unique_patien_IDs_with_labels]
 
-######### DEBUG
-# random.shuffle(unique_patien_IDs)
-# unique_patien_IDs = unique_patien_IDs[0:25]
-######### end
-
-args_dict["NBR_SUBJECTS"] = len(unique_patien_IDs)
+args_dict["NBR_SUBJECTS"] = len(unique_patien_IDs_with_labels)
 
 subj_train_val_idx, subj_test_idx = train_test_split(
-    unique_patien_IDs, test_size=0.05, random_state=args_dict["RANDOM_SEED_NUMBER"]
+    unique_patien_IDs_with_labels,
+    stratify=unique_patien_IDs_labels,
+    test_size=0.15,
+    random_state=args_dict["RANDOM_SEED_NUMBER"],
 )
-test_files = [f[0] for f in all_file_names if any([i == f[1] for i in subj_test_idx])]
+test_files = [
+    f[0] for f in all_file_names if any([i[0] == f[1] for i in subj_test_idx])
+]
 print(f'{"# Train-val subjects":18s}: {len(subj_train_val_idx):2d}')
 print(
     f'{"# Test subjects":18s}: {len(subj_test_idx):2d} ({subj_test_idx} {len(test_files)} total images)'
 )
+# get labels for the remaining files so that can perform stratified cross validation
+subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
+# args_dict["CLASS_WEIGHTS"] = list(
+#     (
+#         1
+#         / np.bincount(subj_train_val_idx_labels)
+#         / np.sum(1 / np.bincount(subj_train_val_idx_labels))
+#     )
+# )
+
+args_dict["CLASS_WEIGHTS"] = [1, 1, 1]
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
@@ -429,7 +371,9 @@ if args_dict["NBR_FOLDS"] > 1:
         shuffle=True,
         random_state=args_dict["RANDOM_SEED_NUMBER"],
     )
-    for idx, (train_index, val_index) in enumerate(kf.split(subj_train_val_idx)):
+    for idx, (train_index, val_index) in enumerate(
+        kf.split(subj_train_val_idx, subj_train_val_idx_labels)
+    ):
         subj_train_idx.append([subj_train_val_idx[i] for i in train_index])
         subj_val_idx.append([subj_train_val_idx[i] for i in val_index])
         # get also the respective training and validation file names for the generator
@@ -437,11 +381,15 @@ if args_dict["NBR_FOLDS"] > 1:
             [
                 f[0]
                 for f in all_file_names
-                if any([i == f[1] for i in subj_train_idx[-1]])
+                if any([i[0] == f[1] for i in subj_train_idx[-1]])
             ]
         )
         per_fold_validation_files.append(
-            [f[0] for f in all_file_names if any([i == f[1] for i in subj_val_idx[-1]])]
+            [
+                f[0]
+                for f in all_file_names
+                if any([i[0] == f[1] for i in subj_val_idx[-1]])
+            ]
         )
 
         # print to check that all is good
@@ -450,21 +398,24 @@ if args_dict["NBR_FOLDS"] > 1:
         )
 else:
     # N_FOLDS is only one, setting 10% of the training dataset as validation
-    print("DEBUG: getting indexes of training and validation files for one fold.")
+    print("Getting indexes of training and validation files for one fold.")
     aus_train, aus_val = train_test_split(
-        subj_train_val_idx, test_size=0.1, random_state=args_dict["RANDOM_SEED_NUMBER"]
+        subj_train_val_idx,
+        stratify=subj_train_val_idx_labels,
+        test_size=0.1,
+        random_state=args_dict["RANDOM_SEED_NUMBER"],
     )
     subj_train_idx.append(aus_train)
     subj_val_idx.append(aus_val)
-
-    # print(f"DEBUG: training indexes {subj_train_idx}.")
-    # print(f"DEBUG: val indexes {subj_val_idx}.")
-
     per_fold_training_files.append(
-        [f[0] for f in all_file_names if any([i == f[1] for i in subj_train_idx[-1]])]
+        [
+            f[0]
+            for f in all_file_names
+            if any([i[0] == f[1] for i in subj_train_idx[-1]])
+        ]
     )
     per_fold_validation_files.append(
-        [f[0] for f in all_file_names if any([i == f[1] for i in subj_val_idx[-1]])]
+        [f[0] for f in all_file_names if any([i[0] == f[1] for i in subj_val_idx[-1]])]
     )
 
     # print to check that all is good
@@ -491,8 +442,8 @@ for idx, test_f in enumerate(test_files):
             )
 
 print(f"\nChecking of the test files passed!")
-# Save infromation about which files are used for training/validation/testing
 
+# Save infromation about which files are used for training/validation/testing
 dict = {
     "test": [os.path.basename(f) for f in test_files],
     "train": [],
@@ -513,19 +464,150 @@ with open(
 print(
     f"Training files:{len(per_fold_training_files[-1])}\nValidation files: {len(per_fold_validation_files[-1])}"
 )
-# %% test genrators
-importlib.reload(data_utilities)
-target_size = (224, 224)
-gen = data_utilities.get_data_generator_TF_CBTN(
-    sample_files=test_files,
-    target_size=target_size,
-    batch_size=args_dict["BATCH_SIZE"],
-    dataset_type="training",
-)
+# %% test generators
+
+look_at_generator = False
+
+if look_at_generator:
+    # define utilities
+
+    def show_batched_example_tfrs_dataset(
+        dataset,
+        class_names=["0", "1"],
+        nbr_images: int = 1,
+        show_gradCAM: bool = False,
+        show_histogram: bool = False,
+    ):
+        iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
+        next_element = iterator.get_next()
+        with tf.compat.v1.Session() as sess:
+            image_batch, label_batch = sess.run(next_element)
+            print(image_batch["image"].shape)
+            print(
+                f' mean: {np.mean(image_batch["image"]):0.4f}\n std: {np.std(image_batch["image"]):0.4f}'
+            )
+
+        for i in range(nbr_images):
+            fig, ax = plt.subplots(
+                nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5)
+            )
+
+            if show_gradCAM:
+                ax[0].imshow(image_batch["image"][i, :, :, 0], cmap="gray")
+                label = label_batch["label"][i]
+                ax[0].set_title(class_names[label.argmax()])
+                ax[1].imshow(image_batch["image"][i, :, :, 1], cmap="gray")
+            else:
+                ax.imshow(image_batch["image"][i, :, :, 0], cmap="gray")
+                label = label_batch["label"][i]
+                ax.set_title(class_names[label.argmax()])
+            plt.show(fig)
+
+        if show_histogram:
+            fig, ax = plt.subplots(
+                nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5)
+            )
+            if show_gradCAM:
+                ax[0].hist(image_batch["image"][:, :, :, 0].ravel(), bins=256)
+                label = label_batch["label"][i]
+                ax[0].set_title("Histogram of image pixel values")
+                ax[1].hist(image_batch["image"][:, :, :, 1].ravel(), bins=256)
+            else:
+                ax.hist(image_batch["image"][:, :, :, 0].ravel(), bins=256)
+                label = label_batch["label"][i]
+                ax.set_title("Histogram of image pixel values")
+
+    def show_batched_example(dataset, class_names=["0", "1"], nbr_images: int = 1):
+        image_batch, label_batch = next(iter(dataset))
+
+        plt.figure(figsize=(10, 10))
+        for i in range(nbr_images):
+            plt.imshow(image_batch["image"][i, :, :, 1], cmap="gray")
+            label = label_batch["label"][i]
+            plt.title(class_names[label.argmax()])
+            plt.axis("off")
+
+    importlib.reload(data_utilities)
+    target_size = (224, 224)
+    # gen = data_utilities.tfrs_data_generator(
+    #     sample_files=test_files,
+    #     target_size=target_size,
+    #     batch_size=args_dict["BATCH_SIZE"],
+    #     dataset_type="training",
+    # )
+    random.shuffle(test_files)
+
+    gen, gen_steps = data_utilities.tfrs_data_generator(
+        file_paths=test_files,
+        input_size=target_size,
+        batch_size=1,
+        buffer_size=1000,
+        data_augmentation=True,
+        normalize_img=False,
+        return_age=True,
+        normalize_age=False,
+        return_gradCAM=True,
+        normalize_gradCAM=False,
+        dataset_type="test",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
+
+    img_stats, gradCAM_stats, age_stats = data_utilities.get_normalization_values(
+        gen, gen_steps, return_age_norm_values=True, return_gradCAM_norm_values=True
+    )
+
+    print(f"Image data (mean+-std): {img_stats}")
+    print(f"gradCAM data (mean+-std): {gradCAM_stats}")
+    print(f"Age data (mean+-std): {age_stats}")
+
+    gen, gen_steps = data_utilities.tfrs_data_generator(
+        file_paths=test_files,
+        input_size=target_size,
+        batch_size=20,
+        buffer_size=1000,
+        data_augmentation=True,
+        normalize_img=True,
+        img_norm_values=img_stats,
+        return_gradCAM=True,
+        normalize_gradCAM=True,
+        gradCAM_norm_values=None,
+        return_age=True,
+        normalize_age=True,
+        age_norm_values=age_stats,
+        dataset_type="train",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
+
+    img_stats, gradCAM_stats, age_stats = data_utilities.get_normalization_values(
+        gen, gen_steps, return_age_norm_values=True, return_gradCAM_norm_values=True
+    )
+
+    print("################## AFTER NORMALIZATION #################")
+    print(f"Image data (mean+-std): {img_stats}")
+    print(f"gradCAM data (mean+-std): {gradCAM_stats}")
+    print(f"Age data (mean+-std): {age_stats}")
+
+    if Path(test_files[0]).suffix == ".tfrecords":
+        show_batched_example_tfrs_dataset(
+            gen,
+            nbr_images=15,
+            show_gradCAM=False,
+            show_histogram=True,
+            class_names=["ASTR", "EP", "MED"],
+        )
+    else:
+        show_batched_example(gen, nbr_images=5)
+
 # %%
 # ---------
 # RUNIING CROSS VALIDATION TRAINING
 # ---------
+importlib.reload(data_utilities)
+importlib.reload(models)
+
+# save training configuration (right before training to account for the changes made in the meantime)
+with open(os.path.join(args_dict["SAVE_PATH"], "config.json"), "w") as config_file:
+    config_file.write(json.dumps(args_dict))
 
 # create dictionary where to save the test performance
 summary_test = {}
@@ -536,56 +618,144 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     Path(save_model_path).mkdir(parents=True, exist_ok=True)
     summary_test[str(cv_f + 1)] = {"best": [], "last": []}
 
-    print(f'{" "*3}Setting up training an validation data Generators ...')
+    print(f'{" "*3}Setting up training and validation data Generators ...')
 
     # --------------------------
     # CREATE DATA GENERATORS
     # -------------------------
-    importlib.reload(data_utilities)
 
+    # specify data generator specific for the different types of datasets
+    if args_dict["TFR_DATA"]:
+        data_gen = data_utilities.tfrs_data_generator
+    elif any(
+        [args_dict["USE_AGE"], args_dict["USA_GRADCAM"], not args_dict["TFR_DATA"]]
+    ):
+        raise ValueError(
+            "Trying to run training using dataset from .png files while asking for age information and/or gradCAM.\nThis is not yet implemented. Use TFR dataset."
+        )
+    else:
+        data_gen = data_utilities.img_data_generator
+
+    # define generator parameters
     target_size = (224, 224)
-    train_gen = data_utilities.get_data_generator_TF(
-        sample_files=per_fold_training_files[cv_f],
-        target_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        dataset_type="training",
-    )
-    val_gen = data_utilities.get_data_generator_TF(
-        sample_files=per_fold_validation_files[cv_f],
-        target_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        dataset_type="validation",
-    )
-    test_gen = data_utilities.get_data_generator_TF(
-        sample_files=test_files,
-        target_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        dataset_type="testing",
-    )
-    # train_gen = data_utilities.get_data_generator_TF_CBTN(
-    #     sample_files=per_fold_training_files[cv_f],
-    #     target_size=target_size,
-    #     batch_size=args_dict["BATCH_SIZE"],
-    #     dataset_type="training",
-    # )
-    # val_gen = data_utilities.get_data_generator_TF_CBTN(
-    #     sample_files=per_fold_validation_files[cv_f],
-    #     target_size=target_size,
-    #     batch_size=args_dict["BATCH_SIZE"],
-    #     dataset_type="validation",
-    # )
-    # test_gen = data_utilities.get_data_generator_TF_CBTN(
-    #     sample_files=test_files,
-    #     target_size=target_size,
-    #     batch_size=args_dict["BATCH_SIZE"],
-    #     dataset_type="testing",
-    # )
 
-    print(
-        f"Training: {len(train_gen)}\nValidation: {len(val_gen)}\nTesting: {len(test_gen)}"
+    # # ################## TRAINING GENERATOR (get also normalization values)
+    tr_files = per_fold_training_files[cv_f]
+    random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(tr_files)
+
+    train_gen, train_steps = data_gen(
+        file_paths=tr_files[
+            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
+        ],
+        input_size=target_size,
+        batch_size=args_dict["BATCH_SIZE"],
+        buffer_size=1000,
+        data_augmentation=False,
+        normalize_img=False,
+        img_norm_values=None,
+        return_gradCAM=args_dict["USE_GRADCAM"],
+        normalize_gradCAM=False,
+        gradCAM_norm_values=None,
+        return_age=args_dict["USE_AGE"],
+        normalize_age=False,
+        age_norm_values=None,
+        dataset_type="test",
+        nbr_classes=args_dict["NBR_CLASSES"],
     )
 
-    ## BUILD DETERCTION MODEL
+    # get normalization stats
+    print(f'{" "*6}Getting normalization stats from training generator...')
+    norm_stats = data_utilities.get_normalization_values(
+        train_gen,
+        train_steps,
+        return_age_norm_values=args_dict["USE_AGE"],
+        return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
+    )
+
+    # build actuall training datagen with normalized values
+    train_gen, train_steps = data_gen(
+        file_paths=tr_files[
+            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
+        ],
+        input_size=target_size,
+        batch_size=args_dict["BATCH_SIZE"],
+        buffer_size=1000,
+        data_augmentation=True,
+        normalize_img=True,
+        img_norm_values=norm_stats[0]
+        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
+        else norm_stats,
+        return_gradCAM=args_dict["USE_GRADCAM"],
+        normalize_gradCAM=True,
+        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
+        return_age=args_dict["USE_AGE"],
+        normalize_age=True,
+        age_norm_values=norm_stats[2]
+        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
+        else norm_stats[1]
+        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
+        else None,
+        dataset_type="train",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
+    print(f'{" "*6}Training gen. done!')
+
+    val_files = per_fold_validation_files[cv_f]
+    random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(val_files)
+    val_gen, val_steps = data_gen(
+        file_paths=val_files[
+            0 : int(len(val_files) * args_dict["DEBUG_DATASET_FRACTION"])
+        ],
+        input_size=target_size,
+        batch_size=args_dict["BATCH_SIZE"],
+        buffer_size=1000,
+        data_augmentation=True,
+        normalize_img=True,
+        img_norm_values=norm_stats[0]
+        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
+        else norm_stats,
+        return_gradCAM=args_dict["USE_GRADCAM"],
+        normalize_gradCAM=True,
+        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
+        return_age=args_dict["USE_AGE"],
+        normalize_age=True,
+        age_norm_values=norm_stats[2]
+        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
+        else norm_stats[1]
+        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
+        else None,
+        dataset_type="val",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
+    print(f'{" "*6}Validation gen. done!')
+    test_gen, test_steps = data_gen(
+        file_paths=test_files,
+        input_size=target_size,
+        batch_size=1,
+        buffer_size=10,
+        data_augmentation=False,
+        normalize_img=True,
+        img_norm_values=norm_stats[0]
+        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
+        else norm_stats,
+        return_gradCAM=args_dict["USE_GRADCAM"],
+        normalize_gradCAM=True,
+        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
+        return_age=args_dict["USE_AGE"],
+        normalize_age=True,
+        age_norm_values=norm_stats[2]
+        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
+        else norm_stats[1]
+        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
+        else None,
+        dataset_type="test",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
+    print(f'{" "*6}Testing gen. done!')
+
+    # -------------
+    # CREATE MODEL
+    # ------------
     importlib.reload(models)
     if args_dict["USE_PRETRAINED_MODEL"]:
         print(f'{" "*3}Loading pretrained model...')
@@ -594,107 +764,304 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         # replace the last dense layer to match the number of classes
         intermediat_output = model.layers[-2].output
         new_output = tf.keras.layers.Dense(
-            units=3, input_shape=model.layers[-1].input_shape, name="prediction"
+            units=len(train_gen.class_indices),
+            input_shape=model.layers[-1].input_shape,
+            name="prediction",
         )(intermediat_output)
+        # make sure that model layers are trainable
+        for layer in model.layers:
+            layer.trainable = False
         model = tf.keras.Model(inputs=model.inputs, outputs=new_output)
+        print(model.summary())
     else:
         print(f'{" "*3}Building model from scratch...')
-        # build custom model (WHAT HAS BEEN USED IN THE qMRI PROJECT)
-        model = models.SimpleDetectionModel_TF(
-            num_classes=2,
-            input_shape=(224, 224, 1),
-            class_weights=None,
-            kernel_size=(3, 3),
-            pool_size=(2, 2),
-            model_name="SimpleDetectionModel",
+        # build custom model
+        input_shape = (
+            (target_size[0], target_size[1], 1)
+            if not args_dict["USE_GRADCAM"]
+            else (target_size[0], target_size[1], 2)
         )
 
-    ## COMPILE MODEL
-    learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
-        args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.9
-    )
-    optimizer = tf.keras.optimizers.Adam(learning_rate=args_dict["LEARNING_RATE"])
+        if args_dict["MODEL_TYPE"] == "SDM4":
+            print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+            model = models.SimpleDetectionModel_TF(
+                num_classes=args_dict["NBR_CLASSES"],
+                input_shape=input_shape,
+                kernel_size=(3, 3),
+                pool_size=(2, 2),
+                use_age=args_dict["USE_AGE"],
+                use_age_thr_tabular_network=False,
+                use_gradCAM=args_dict["USE_GRADCAM"],
+            )
+        elif args_dict["MODEL_TYPE"] == "ResNet9":
+            print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+            model = models.ResNet9(
+                num_classes=args_dict["NBR_CLASSES"],
+                input_shape=input_shape,
+                use_age=args_dict["USE_AGE"],
+                use_age_thr_tabular_network=False,
+                use_gradCAM=args_dict["USE_GRADCAM"],
+            )
+        elif args_dict["MODEL_TYPE"] == "ViT":
+            print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+            model = models.ViT_2(
+                input_size=input_shape,
+                num_classes=args_dict["NBR_CLASSES"],
+                use_age=args_dict["USE_AGE"],
+                use_age_thr_tabular_network=False,
+                use_gradCAM=args_dict["USE_GRADCAM"],
+                patch_size=16,
+                projection_dim=64,
+                num_heads=8,
+                mlp_head_units=(256, 128),
+                transformer_layers=8,
+                transformer_units=None,
+                debug=False,
+            )
+        else:
+            raise ValueError(
+                "Model type not among the ones that are implemented.\nDefine model in the models.py file and add code here for building the model."
+            )
+
+        # ################################# COMPILE MODEL
+        # # get warmUP parameters
+        total_steps = int(
+            (train_steps / args_dict["BATCH_SIZE"]) * args_dict["MAX_EPOCHS"]
+        )
+        warmup_epoch_percentage = 0.10
+        warmup_steps = int(total_steps * warmup_epoch_percentage)
+        scheduled_lrs = tf_callbacks.WarmUpCosine(
+            learning_rate_base=args_dict["LEARNING_RATE"],
+            total_steps=total_steps,
+            warmup_learning_rate=0.0,
+            warmup_steps=warmup_steps,
+        )
+
+        if args_dict["OPTIMIZER"] == "SGD":
+            print(f'{" "*6}Using SGD optimizer.')
+            optimizer = tf.keras.optimizers.SGD(
+                learning_rate=args_dict["LEARNING_RATE"],
+                decay=1e-6,
+                momentum=0.9,
+                nesterov=True,
+            )
+        elif args_dict["OPTIMIZER"] == "ADAM":
+            print(f'{" "*6}Using Adam optimizer.')
+
+            # learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+            #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
+            # )
+            optimizer = tfa.optimizers.AdamW(
+                learning_rate=scheduled_lrs, weight_decay=0.0001
+            )
+
+    # wrap using LookAhead which helps smoothing out validation curves
     optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
 
-    loss = tf.keras.losses.CategoricalCrossentropy()
+    if args_dict["LOSS"] == "MCC":
+        print(f'{" "*6}Using MCC loss.')
+        importlib.reload(losses)
+        loss = losses.MCC_Loss()
+        what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
+            num_classes=args_dict["NBR_CLASSES"]
+        )
+    elif args_dict["LOSS"] == "CCE":
+        print(f'{" "*6}Using CCE loss.')
+        loss = tf.keras.losses.CategoricalCrossentropy()
+        what_to_monitor = "val_accuracy"
+    elif args_dict["LOSS"] == "BCE":
+        print(f'{" "*6}Using BCS loss.')
+        loss = tf.keras.losses.BinaryCrossentropy()
+        what_to_monitor = "val_accuracy"
+    else:
+        raise ValueError(
+            f"The loss provided is not available. Implement in the losses.py or here."
+        )
 
-    model.compile(optimizer=optimizer, loss=loss, metrics=["accuracy"])
+    model.compile(
+        optimizer=optimizer,
+        loss=loss,
+        metrics=["accuracy"],
+    )
+    # model.compile(
+    #     optimizer=optimizer,
+    #     loss=loss,
+    #     metrics=[
+    #         tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
+    #         tf.keras.metrics.SparseTopKCategoricalAccuracy(5, name="top-5-accuracy"),
+    #     ],
+    # )
 
-    ## SET MODEL CHECKPOINT
+    # ######################### SET MODEL CHECKPOINT
     best_model_path = os.path.join(save_model_path, "best_model_weights", "")
     Path(best_model_path).mkdir(parents=True, exist_ok=True)
 
     model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
         filepath=best_model_path,
         save_weights_only=True,
-        monitor="val_accuracy",
-        mode="max",
-        save_best_only=True,
+        monitor="val_loss",
+        mode="min",
+        save_best_only=False,
     )
 
-    ## RUN MODEL TRAINING
+    importlib.reload(tf_callbacks)
+    callbacks_list = [
+        # tf_callbacks.SaveBestModelWeights(
+        #     save_path=best_model_path, monitor="val_loss", mode="min"
+        # ),
+        model_checkpoint_callback,
+        tf_callbacks.LossAndErrorPrintingCallback(
+            save_path=save_model_path, print_every_n_epoch=5
+        ),
+    ]
+
+    # ------------------
+    # RUN MODEL TRAINING
+    # ------------------
     history = model.fit(
         train_gen,
-        steps_per_epoch=len(train_gen),
+        steps_per_epoch=train_steps,
         shuffle=True,
         validation_data=val_gen,
-        validation_steps=len(val_gen),
+        validation_steps=val_steps,
         epochs=args_dict["MAX_EPOCHS"],
         verbose=1,
-        callbacks=[model_checkpoint_callback],
+        callbacks=callbacks_list,
+        class_weight=args_dict["CLASS_WEIGHTS"],
     )
 
-    args_dict["MAX_EPOCHS"]
     # save last model
-    model.save(os.path.join(save_model_path, "last_model"))
-
-    ## EVALUATE LAST & BEST MODEL
+    last_model_path = os.path.join(save_model_path, "last_model")
+    Path(last_model_path).mkdir(parents=True, exist_ok=True)
+    model.save(
+        os.path.join(last_model_path, "last_model"),
+        save_format="h5",
+        include_optimizer=False,
+    )
+    # ------------------
+    # MODEL EVASLUATION
+    # ------------------
     importlib.reload(utilities)
+
     # ###################### LAST MODEL
     # get the per_slice classification
     Ptest_softmax = []
     Ytest_categorical = []
-    for i in range(len(test_gen)):
-        x, y = next(iter(test_gen))
+    if not args_dict["TFR_DATA"]:
+        for i in range(test_steps):
+            x, y = next(iter(test_gen))
+            Ytest_categorical.append(y)
+            Ptest_softmax.append(model.predict(x))
+        Ptest_softmax = np.row_stack(Ptest_softmax)
+    else:
+        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
+        next_element = iterator.get_next()
+        with tf.compat.v1.Session() as sess:
+            for _ in range(test_steps):
+                sample = sess.run(next_element)
+                Ytest_categorical.append(sample[1]["label"])
+        Ptest_softmax = model.predict(test_gen)
 
-        Ytest_categorical.append(y)
-
-        Ptest_softmax.append(model.predict(x))
-
-    Ptest_softmax = np.row_stack(Ptest_softmax)
     Ptest = np.argmax(Ptest_softmax, axis=-1)
-
     Ytest_categorical = np.row_stack(Ytest_categorical)
     summary_test[str(cv_f + 1)]["last"] = utilities.get_performance_metrics(
         Ytest_categorical, Ptest_softmax, average="macro"
     )
-    # [print(f'{key}: {value}\n') for key, value in summary_test['last'].items()]
     summary_test[str(cv_f + 1)]["last"]["per_case_prediction"] = Ptest
+
+    # SAVE CONFUSION MATRIX; ROC and PR curves
+    utilities.plotConfusionMatrix(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_CM",
+        draw=False,
+    )
+    utilities.plotROC(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_ROC",
+        draw=False,
+    )
+    utilities.plotPR(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_PR",
+        draw=False,
+    )
 
     # ###################### BEST MODEL
     model.load_weights(best_model_path)
     # get the per_slice classification
     Ptest_softmax = []
     Ytest_categorical = []
-    for i in range(len(test_gen)):
-        x, y = next(iter(test_gen))
+    if not args_dict["TFR_DATA"]:
+        for i in range(test_steps):
+            x, y = next(iter(test_gen))
+            Ytest_categorical.append(y)
+            Ptest_softmax.append(model.predict(x))
+        Ptest_softmax = np.row_stack(Ptest_softmax)
+    else:
+        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
+        next_element = iterator.get_next()
+        with tf.compat.v1.Session() as sess:
+            for _ in range(test_steps):
+                sample = sess.run(next_element)
+                Ytest_categorical.append(sample[1]["label"])
+        Ptest_softmax = model.predict(test_gen)
 
-        Ytest_categorical.append(y)
-
-        Ptest_softmax.append(model.predict(x))
-
-    Ptest_softmax = np.row_stack(Ptest_softmax)
     Ptest = np.argmax(Ptest_softmax, axis=-1)
 
     Ytest_categorical = np.row_stack(Ytest_categorical)
     summary_test[str(cv_f + 1)]["best"] = utilities.get_performance_metrics(
         Ytest_categorical, Ptest_softmax, average="macro"
     )
-    # [print(f'{key}: {value}\n') for key, value in summary_test['last'].items()]
     summary_test[str(cv_f + 1)]["best"]["per_case_prediction"] = Ptest
 
-    ## SAVE TRAINING CURVES
+    # SAVE CONFUSION MATRIX; ROC and PR curves
+    utilities.plotConfusionMatrix(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="best_model_CM",
+        draw=False,
+    )
+    utilities.plotROC(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="best_model_ROC",
+        draw=False,
+    )
+    utilities.plotPR(
+        GT=Ytest_categorical,
+        PRED=Ptest_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="best_model_PR",
+        draw=False,
+    )
 
+    # ## SAVE FINAL CURVES
     fig, ax = plt.subplots(figsize=(20, 15), nrows=2, ncols=1)
     # print training loss
     ax[0].plot(history.history["loss"], label="training loss")

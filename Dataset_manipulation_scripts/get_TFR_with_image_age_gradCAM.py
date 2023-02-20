@@ -77,7 +77,7 @@ else:
     print("Running in debug mode.")
     args_dict = {
         "PATH_TO_CBTN_SLICES": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
-        "PATH_TO_CBTN_GRADCAMS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DetectionModel_SDM4_t2_CBTN_loss_CCE_lr_1e-05_batchSize_32_pretrained_False_useAge_False/Explainability_analysis/GradCAMs",
+        "PATH_TO_CBTN_GRADCAMS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DetectionModels/DetectionModel_SDM4_t2_CBTN_loss_CCE_lr_1e-05_batchSize_32_pretrained_False_useAge_False/Explainability_analysis/GradCAMs",
         "PATH_TO_TABULAR_DATA": "/flush/iulta54/Research/Data/CBTN/CSV_files/adc_all_files_from_Tamara.xlsx",
         "SAVE_PATH": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR/T2",
     }
@@ -136,9 +136,9 @@ skipped_files = []
 save_non_tumor_slices = True
 saved_idx = 0
 # load image data and gradCAM for each slice
-for idx, f in enumerate(img_and_gradCAM_files):
+for idx, f in enumerate(img_and_gradCAM_files[0:1]):
     print(
-        f"Working on {idx+1:{len(str(len(img_and_gradCAM_files)))}d} of {len(img_and_gradCAM_files)} (saved {saved_idx}) \r",
+        f"Working on {idx+1:{len(str(len(img_and_gradCAM_files)))}d} of {len(img_and_gradCAM_files)} (saved {saved_idx+1}) \r",
         end="",
     )
     # get if the file belongs to a slice with or without tumor
@@ -178,7 +178,23 @@ for idx, f in enumerate(img_and_gradCAM_files):
         age_data = int(os.path.basename(f[0]).split("_")[2][0:-1])
 
         # get ready to write the tf_example into the TFrecord file
-        file_name = Path(os.path.basename(f[0])).stem + ".tfrecords"
+        # add infra supra information in the file name
+        file_name = Path(os.path.basename(f[0])).stem
+        if any([label_5_classes == i for i in [1, 3, 5]]):
+            file_name = (
+                file_name.split("_")[0]
+                + "_infra_"
+                + "_".join(file_name.split("_")[1:-1])
+                + ".tfrecords"
+            )
+        else:
+            file_name = (
+                file_name.split("_")[0]
+                + "_supra_"
+                + "_".join(file_name.split("_")[1::])
+                + ".tfrecords"
+            )
+
         writer = tf.io.TFRecordWriter(os.path.join(args_dict["SAVE_PATH"], file_name))
 
         # Creates a tf.Example message ready to be written to a file for all the images.

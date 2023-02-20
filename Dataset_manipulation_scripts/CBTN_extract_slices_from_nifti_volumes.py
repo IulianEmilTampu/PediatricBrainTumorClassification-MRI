@@ -300,7 +300,7 @@ def slice_volume_and_save(
     # transpose the volumes to make the slice index the first
     if axis_to_slice == 2:
         anatomical_vol = anatomical_vol.transpose((1, 0, 2))
-        anatomical_vol = annotation_vol.transpose((1, 0, 2))
+        annotation_volume = annotation_vol.transpose((1, 0, 2))
     elif axis_to_slice == 3:
         anatomical_vol = anatomical_vol.transpose((2, 0, 1))
         annotation_volume = annotation_vol.transpose((2, 0, 1))
@@ -331,23 +331,21 @@ def slice_volume_and_save(
             )
             file_name = f"{name_prefix}_rlp_{relative_position:0.1f}_label_{label}"
             if save_annotation:
-                I = annotation_vol[bi, :, :].squeeze()
+                I = annotation_volume[bi, :, :].squeeze()
                 I8 = (((I - I.min()) / (I.max() - I.min())) * 255.9).astype(np.uint8)
                 im = Image.fromarray(I8)
-                im.save(
-                    os.path.join(save_path, f"{file_name}_annotation_.{img_format}")
-                )
+                im.save(os.path.join(save_path, f"{file_name}_annotation.{img_format}"))
         else:
             # save brain slide
             label = 0
             relative_position = np.min(np.abs(tumor_slices_indexes - bi))
             file_name = f"{name_prefix}_rlp_{relative_position:0.1f}_label_{label}"
 
-        # save slide
-        I = anatomical_vol[bi, :, :].squeeze()
-        I8 = (((I - I.min()) / (I.max() - I.min())) * 255.9).astype(np.uint8)
-        im = Image.fromarray(I8)
-        im.save(os.path.join(save_path, f"{file_name}.{img_format}"))
+        # # save slide
+        # I = anatomical_vol[bi, :, :].squeeze()
+        # I8 = (((I - I.min()) / (I.max() - I.min())) * 255.9).astype(np.uint8)
+        # im = Image.fromarray(I8)
+        # im.save(os.path.join(save_path, f"{file_name}.{img_format}"))
         counter += 1
 
     return counter
@@ -660,7 +658,7 @@ for modality in modalities:
             name_prefix=name_prefix,
             save_path=modality_folder,
             img_format="png",
-            save_annotation=False,
+            save_annotation=True,
         )
         print(f" Saved {slice_counter} slices from this volume...")
         # save index sample processed

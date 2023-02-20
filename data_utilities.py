@@ -159,6 +159,7 @@ def _parse_function(
     normalize_age: bool = False,
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
+    to_categorical: bool = True,
 ):
     """
     This function parses a single TF examples.
@@ -242,8 +243,12 @@ def _parse_function(
         label = parsed_features[f"label_{nbr_classes}_classes"]
     else:
         label = parsed_features[f"slice_with_tumor"]
+
+    label = tf.cast(label, dtype=tf.int32)
     # convert to categorical
-    label = tf.cast(tf.one_hot(tf.cast(label, tf.int32), nbr_classes), dtype=tf.float32)
+    if to_categorical:
+        label = tf.cast(tf.one_hot(label - 1, nbr_classes), dtype=tf.float32)
+        # label = tf.keras.utils.to_categorical(label, nbr_classes, dtype=tf.float32)
 
     if all([return_img, return_gradCAM, return_age]):
         image = tf.stack([image, gradCAM], axis=-1)
@@ -348,6 +353,7 @@ def tfrs_data_generator(
     normalize_age: bool = False,
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
+    to_categorical: bool = True,
 ):
     """
     Function that given a list of TFRecord files returns a data generator on them.
@@ -411,6 +417,7 @@ def tfrs_data_generator(
                     normalize_age=normalize_age,
                     age_norm_values=age_norm_values,
                     nbr_classes=nbr_classes,
+                    to_categorical=to_categorical,
                 )
             )
         ),
@@ -517,6 +524,7 @@ def get_img_file_names(
         "tumor_max_rpl": 100,
         "brain_min_rpl": 1,
         "brain_max_rpl": 25,
+        "tumor_loc": ["infra"],
     }
 
     if not kwargs:
@@ -580,9 +588,10 @@ def get_img_file_names(
             files = glob.glob(
                 os.path.join(img_dataset_path, modality, f"*label_1.{file_format}")
             )
+
             # filter files with relative position of the tumor
             files = [
-                (f, os.path.basename(f).split("_")[1])
+                (f, os.path.basename(f).split("_")[2])
                 for f in files
                 if all(
                     [
@@ -594,13 +603,31 @@ def get_img_file_names(
                 )
             ]
             all_file_names.extend(files)
+
+            # filter based on tumor location
+            # find indexes elements
+            to_keep = []
+            to_remove = []
+            for idx, f in enumerate(all_file_names):
+                f_loc = os.path.basename(f[0]).split("_")[1]
+                if any([f_loc == l for l in kwargs["tumor_loc"]]):
+                    # print(f"keeping {os.path.basename(f[0])}")
+                    to_keep.append(idx)
+                else:
+                    # print(f"removing {os.path.basename(f[0])}")
+                    to_remove.append(idx)
+
+            # print(f"Keeping {len(to_keep)}, removing {len(to_remove)}")
+            # all_file_names = [all_file_names[idx] for idx in to_keep]
+            # print(f"{len(all_file_names)} after filtering")
+
             # add the files without tumor if detection
             if kwargs["task"].lower() == "detection":
                 files = glob.glob(
                     os.path.join(img_dataset_path, modality, f"*label_0.{file_format}")
                 )
                 files = [
-                    (f, os.path.basename(f).split("_")[1])
+                    (f, os.path.basename(f).split("_")[2])
                     for f in files
                     if all(
                         [

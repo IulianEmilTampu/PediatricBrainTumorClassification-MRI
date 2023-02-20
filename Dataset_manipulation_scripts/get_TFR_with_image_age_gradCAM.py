@@ -136,7 +136,7 @@ skipped_files = []
 save_non_tumor_slices = True
 saved_idx = 0
 # load image data and gradCAM for each slice
-for idx, f in enumerate(img_and_gradCAM_files[0:1]):
+for idx, f in enumerate(img_and_gradCAM_files):
     print(
         f"Working on {idx+1:{len(str(len(img_and_gradCAM_files)))}d} of {len(img_and_gradCAM_files)} (saved {saved_idx+1}) \r",
         end="",
@@ -184,7 +184,7 @@ for idx, f in enumerate(img_and_gradCAM_files[0:1]):
             file_name = (
                 file_name.split("_")[0]
                 + "_infra_"
-                + "_".join(file_name.split("_")[1:-1])
+                + "_".join(file_name.split("_")[1::])
                 + ".tfrecords"
             )
         else:

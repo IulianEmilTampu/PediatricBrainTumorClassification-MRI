@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = False
+su_debug_flag = True
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -226,9 +226,9 @@ else:
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 3,
+        "NBR_FOLDS": 1,
         "LEARNING_RATE": 0.00001,
-        "BATCH_SIZE": 32,
+        "BATCH_SIZE": 16,
         "MAX_EPOCHS": 100,
         "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
@@ -239,8 +239,8 @@ else:
         "MR_MODALITIES": ["T2"],
         "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
-        "MODEL_TYPE": "ViT",
-        "MODEL_NAME": "ClassificationnModel",
+        "MODEL_TYPE": "SDM4",
+        "MODEL_NAME": "Test_is_it_saving",
         "OPTIMIZER": "ADAM",
     }
 
@@ -328,6 +328,7 @@ all_file_names = data_utilities.get_img_file_names(
     brain_min_rpl=1,
     brain_max_rpl=25,
     file_format="tfrecords",
+    tumor_loc=["infra"],
 )
 
 unique_patien_IDs_with_labels = list(
@@ -352,15 +353,14 @@ print(
 )
 # get labels for the remaining files so that can perform stratified cross validation
 subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
-# args_dict["CLASS_WEIGHTS"] = list(
-#     (
-#         1
-#         / np.bincount(subj_train_val_idx_labels)
-#         / np.sum(1 / np.bincount(subj_train_val_idx_labels))
-#     )
-# )
-
-args_dict["CLASS_WEIGHTS"] = [1, 1, 1]
+args_dict["CLASS_WEIGHTS"] = list(
+    (
+        1
+        / np.bincount(subj_train_val_idx_labels)
+        / np.sum(1 / np.bincount(subj_train_val_idx_labels))
+    )
+)
+args_dict["CLASS_WEIGHTS"] = [0.7, 1, 0.7]
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
@@ -852,7 +852,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
             # )
             optimizer = tfa.optimizers.AdamW(
-                learning_rate=scheduled_lrs, weight_decay=0.0001
+                learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
             )
 
     # wrap using LookAhead which helps smoothing out validation curves
@@ -901,7 +901,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         save_weights_only=True,
         monitor="val_loss",
         mode="min",
-        save_best_only=False,
+        save_best_only=True,
     )
 
     importlib.reload(tf_callbacks)
@@ -939,7 +939,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         include_optimizer=False,
     )
     # ------------------
-    # MODEL EVASLUATION
+    # MODEL EVALUATION
     # ------------------
     importlib.reload(utilities)
 
@@ -977,7 +977,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_CM",
+        saveName="last_model_CM_test",
         draw=False,
     )
     utilities.plotROC(
@@ -987,7 +987,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_ROC",
+        saveName="last_model_ROC_test",
         draw=False,
     )
     utilities.plotPR(
@@ -997,7 +997,60 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_PR",
+        saveName="last_model_PR_test",
+        draw=False,
+    )
+
+    # do the same for the validation dataset
+    Pval_softmax = []
+    Yval_categorical = []
+    if not args_dict["TFR_DATA"]:
+        for i in range(test_steps):
+            x, y = next(iter(val_gen))
+            Yval_categorical.append(y)
+            Pval_softmax.append(model.predict(x))
+        Pval_softmax = np.row_stack(Pval_softmax)
+    else:
+        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
+        next_element = iterator.get_next()
+        with tf.compat.v1.Session() as sess:
+            for _ in range(test_steps):
+                sample = sess.run(next_element)
+                Yval_categorical.append(sample[1]["label"])
+        Pval_softmax = model.predict(test_gen)
+
+    Ptest = np.argmax(Pval_softmax, axis=-1)
+    Yval_categorical = np.row_stack(Yval_categorical)
+
+    # SAVE CONFUSION MATRIX; ROC and PR curves
+    utilities.plotConfusionMatrix(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_CM_validation",
+        draw=False,
+    )
+    utilities.plotROC(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_ROC_validation",
+        draw=False,
+    )
+    utilities.plotPR(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_PR*_validation",
         draw=False,
     )
 
@@ -1058,6 +1111,59 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
         saveName="best_model_PR",
+        draw=False,
+    )
+
+    # do the same for the validation dataset
+    Pval_softmax = []
+    Yval_categorical = []
+    if not args_dict["TFR_DATA"]:
+        for i in range(test_steps):
+            x, y = next(iter(val_gen))
+            Yval_categorical.append(y)
+            Pval_softmax.append(model.predict(x))
+        Pval_softmax = np.row_stack(Pval_softmax)
+    else:
+        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
+        next_element = iterator.get_next()
+        with tf.compat.v1.Session() as sess:
+            for _ in range(test_steps):
+                sample = sess.run(next_element)
+                Yval_categorical.append(sample[1]["label"])
+        Pval_softmax = model.predict(test_gen)
+
+    Ptest = np.argmax(Pval_softmax, axis=-1)
+    Yval_categorical = np.row_stack(Yval_categorical)
+
+    # SAVE CONFUSION MATRIX; ROC and PR curves
+    utilities.plotConfusionMatrix(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_CM_validation",
+        draw=False,
+    )
+    utilities.plotROC(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_ROC_validation",
+        draw=False,
+    )
+    utilities.plotPR(
+        GT=Yval_categorical,
+        PRED=Pval_softmax,
+        classes=["Not_tumor", "Tumor"]
+        if args_dict["NBR_CLASSES"] == 2
+        else ["ASTR", "EP", "MED"],
+        savePath=save_model_path,
+        saveName="last_model_PR*_validation",
         draw=False,
     )
 

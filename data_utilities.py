@@ -618,7 +618,7 @@ def get_img_file_names(
                     to_remove.append(idx)
 
             # print(f"Keeping {len(to_keep)}, removing {len(to_remove)}")
-            # all_file_names = [all_file_names[idx] for idx in to_keep]
+            all_file_names = [all_file_names[idx] for idx in to_keep]
             # print(f"{len(all_file_names)} after filtering")
 
             # add the files without tumor if detection

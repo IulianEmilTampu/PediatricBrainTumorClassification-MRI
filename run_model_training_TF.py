@@ -42,6 +42,7 @@ su_debug_flag = True
 # --------------------------------------
 # read the input arguments and set the base folder
 # --------------------------------------
+print("WHAT IS WRONG")
 if not su_debug_flag:
     parser = argparse.ArgumentParser(
         description="Run cross validation training for tumor detection."
@@ -228,19 +229,19 @@ else:
         "GPU_NBR": "0",
         "NBR_FOLDS": 1,
         "LEARNING_RATE": 0.00001,
-        "BATCH_SIZE": 16,
-        "MAX_EPOCHS": 100,
+        "BATCH_SIZE": 32,
+        "MAX_EPOCHS": 50,
         "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
-        "USE_AGE": False,
-        "USE_GRADCAM": False,
+        "USE_AGE": True,
+        "USE_GRADCAM": True,
         "LOSS": "CCE",
-        "RANDOM_SEED_NUMBER": 29122009,
+        "RANDOM_SEED_NUMBER": 30122009,
         "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 1,
+        "DEBUG_DATASET_FRACTION": 0.8,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "Test_is_it_saving",
+        "MODEL_NAME": "TEST_new_data_gen",
         "OPTIMIZER": "ADAM",
     }
 
@@ -262,9 +263,9 @@ tf.get_logger().setLevel(logging.ERROR)
 from tensorflow.keras.utils import to_categorical
 from tensorflow_addons.optimizers import Lookahead
 
-from tensorflow.python.framework.ops import disable_eager_execution
+# from tensorflow.python.framework.ops import disable_eager_execution
 
-disable_eager_execution()
+# disable_eager_execution()
 
 devices = tf.config.list_physical_devices("GPU")
 
@@ -302,7 +303,10 @@ Path(args_dict["SAVE_PATH"]).mkdir(parents=True, exist_ok=True)
 
 # print input variables
 max_len = max([len(key) for key in args_dict])
-[print(f"{key:{max_len}s}{type(value)}: {value}") for key, value in args_dict.items()]
+[
+    print(f"{key:{max_len}s}: {value} ({type(value)})")
+    for key, value in args_dict.items()
+]
 # %% GET DATASET FILES
 print(f"Splitting dataset (per-volume (subject) splitting).")
 """
@@ -326,9 +330,9 @@ all_file_names = data_utilities.get_img_file_names(
     tumor_min_rpl=0,
     tumor_max_rpl=100,
     brain_min_rpl=1,
-    brain_max_rpl=25,
+    brain_max_rpl=100,
     file_format="tfrecords",
-    tumor_loc=["infra"],
+    tumor_loc=["infra", "supra"],
 )
 
 unique_patien_IDs_with_labels = list(
@@ -353,14 +357,18 @@ print(
 )
 # get labels for the remaining files so that can perform stratified cross validation
 subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
-args_dict["CLASS_WEIGHTS"] = list(
-    (
-        1
-        / np.bincount(subj_train_val_idx_labels)
-        / np.sum(1 / np.bincount(subj_train_val_idx_labels))
+class_weights_values = list(
+    np.sum(np.bincount(subj_train_val_idx_labels))
+    / (
+        len(np.bincount(subj_train_val_idx_labels))
+        * np.bincount(subj_train_val_idx_labels)
     )
 )
-args_dict["CLASS_WEIGHTS"] = [0.7, 1, 0.7]
+
+args_dict["CLASS_WEIGHTS"] = {}
+
+for c in range(args_dict["NBR_CLASSES"]):
+    args_dict["CLASS_WEIGHTS"][c] = class_weights_values[c]
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
@@ -424,6 +432,8 @@ else:
     )
 
 # check that no testing files are in the training or validation
+idx_to_remove = []
+remove_overlap = True
 for idx, test_f in enumerate(test_files):
     print(
         f"Checking test files ({idx+1:0{len(str(len(test_files)))}d}\{len(test_files)})\r",
@@ -433,13 +443,21 @@ for idx, test_f in enumerate(test_files):
     for fold in range(len(per_fold_training_files)):
         # check in the training set
         if any([test_f == f for f in per_fold_training_files[fold]]):
-            raise ValueError(
-                f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
-            )
+            if remove_overlap:
+                idx_to_remove.append(idx)
+            else:
+                raise ValueError(
+                    f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
+                )
         if any([test_f == f for f in per_fold_validation_files[fold]]):
-            raise ValueError(
-                f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
-            )
+            if remove_overlap:
+                idx_to_remove.append(idx)
+            else:
+                raise ValueError(
+                    f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
+                )
+if remove_overlap:
+    test_f = [f for idx, f in enumerate(test_f) if idx not in idx_to_remove]
 
 print(f"\nChecking of the test files passed!")
 
@@ -464,10 +482,87 @@ with open(
 print(
     f"Training files:{len(per_fold_training_files[-1])}\nValidation files: {len(per_fold_validation_files[-1])}"
 )
+
+# %% check dataset
+
+# importlib.reload(data_utilities)
+# target_size = (224, 224)
+# random.shuffle(test_files)
+
+# gen, gen_steps = data_utilities.tfrs_data_generator(
+#     file_paths=test_files,
+#     input_size=target_size,
+#     batch_size=32,
+#     buffer_size=1000,
+#     data_augmentation=True,
+#     normalize_img=False,
+#     return_age=True,
+#     normalize_age=True,
+#     return_gradCAM=True,
+#     normalize_gradCAM=False,
+#     dataset_type="train",
+#     nbr_classes=args_dict["NBR_CLASSES"],
+# )
+
+# norm_stast = data_utilities.get_normalization_values(
+#     gen, gen_steps, return_age_norm_values=True, return_gradCAM_norm_values=True
+# )
+
+# gen, gen_steps = data_utilities.tfrs_data_generator(
+#     file_paths=test_files,
+#     input_size=target_size,
+#     batch_size=32,
+#     buffer_size=1000,
+#     data_augmentation=True,
+#     normalize_img=True,
+#     return_age=True,
+#     normalize_age=True,
+#     age_norm_values=norm_stast[-1],
+#     return_gradCAM=True,
+#     normalize_gradCAM=False,
+#     gradCAM_norm_values=norm_stast[1],
+#     dataset_type="train",
+#     nbr_classes=args_dict["NBR_CLASSES"],
+# )
+
+# model = models.SimpleDetectionModel_TF(
+#     num_classes=args_dict["NBR_CLASSES"],
+#     input_shape=(224, 224, 2),
+#     kernel_size=(3, 3),
+#     pool_size=(2, 2),
+#     use_age=args_dict["USE_AGE"],
+#     use_age_thr_tabular_network=False,
+#     use_gradCAM=args_dict["USE_GRADCAM"],
+# )
+
+# loss = tf.keras.losses.CategoricalCrossentropy()
+# optimizer = tf.keras.optimizers.SGD(
+#     learning_rate=args_dict["LEARNING_RATE"],
+#     decay=1e-6,
+#     momentum=0.9,
+#     nesterov=True,
+# )
+# model.compile(
+#     optimizer=optimizer,
+#     loss=loss,
+#     metrics=["accuracy"],
+# )
+
+
+# temp_class_weight = {0: 100, 1: 100, 2: 100}
+# history = model.fit(
+#     gen,
+#     steps_per_epoch=gen_steps,
+#     shuffle=True,
+#     validation_data=gen,
+#     validation_steps=gen_steps,
+#     epochs=args_dict["MAX_EPOCHS"],
+#     verbose=1,
+#     class_weight=temp_class_weight,
+# )
 # %% test generators
 
 look_at_generator = False
-
 if look_at_generator:
     # define utilities
 
@@ -478,14 +573,12 @@ if look_at_generator:
         show_gradCAM: bool = False,
         show_histogram: bool = False,
     ):
-        iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
-        next_element = iterator.get_next()
-        with tf.compat.v1.Session() as sess:
-            image_batch, label_batch = sess.run(next_element)
-            print(image_batch["image"].shape)
-            print(
-                f' mean: {np.mean(image_batch["image"]):0.4f}\n std: {np.std(image_batch["image"]):0.4f}'
-            )
+        dataset_iterator = iter(dataset)
+        image_batch, label_batch = next(dataset_iterator)
+        print(image_batch["image"].shape)
+        print(
+            f' mean: {np.mean(image_batch["image"]):0.4f}\n std: {np.std(image_batch["image"]):0.4f}'
+        )
 
         for i in range(nbr_images):
             fig, ax = plt.subplots(
@@ -500,7 +593,7 @@ if look_at_generator:
             else:
                 ax.imshow(image_batch["image"][i, :, :, 0], cmap="gray")
                 label = label_batch["label"][i]
-                ax.set_title(class_names[label.argmax()])
+                ax.set_title(class_names[label.numpy().argmax()])
             plt.show(fig)
 
         if show_histogram:
@@ -508,12 +601,18 @@ if look_at_generator:
                 nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5)
             )
             if show_gradCAM:
-                ax[0].hist(image_batch["image"][:, :, :, 0].ravel(), bins=256)
+                ax[0].hist(
+                    image_batch["image"][:, :, :, 0].numpy().ravel(),
+                )
                 label = label_batch["label"][i]
                 ax[0].set_title("Histogram of image pixel values")
-                ax[1].hist(image_batch["image"][:, :, :, 1].ravel(), bins=256)
+                ax[1].hist(
+                    image_batch["image"][:, :, :, 1].numpy().ravel(),
+                )
             else:
-                ax.hist(image_batch["image"][:, :, :, 0].ravel(), bins=256)
+                ax.hist(
+                    image_batch["image"][:, :, :, 0].numpy().ravel(),
+                )
                 label = label_batch["label"][i]
                 ax.set_title("Histogram of image pixel values")
 
@@ -524,17 +623,12 @@ if look_at_generator:
         for i in range(nbr_images):
             plt.imshow(image_batch["image"][i, :, :, 1], cmap="gray")
             label = label_batch["label"][i]
-            plt.title(class_names[label.argmax()])
+            plt.title(class_names[label.numpy().argmax()])
             plt.axis("off")
 
     importlib.reload(data_utilities)
     target_size = (224, 224)
-    # gen = data_utilities.tfrs_data_generator(
-    #     sample_files=test_files,
-    #     target_size=target_size,
-    #     batch_size=args_dict["BATCH_SIZE"],
-    #     dataset_type="training",
-    # )
+
     random.shuffle(test_files)
 
     gen, gen_steps = data_utilities.tfrs_data_generator(
@@ -680,7 +774,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
-        data_augmentation=True,
+        data_augmentation=False,
         normalize_img=True,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
@@ -709,7 +803,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
-        data_augmentation=True,
+        data_augmentation=False,
         normalize_img=True,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
@@ -731,7 +825,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     test_gen, test_steps = data_gen(
         file_paths=test_files,
         input_size=target_size,
-        batch_size=1,
+        batch_size=args_dict["BATCH_SIZE"],
         buffer_size=10,
         data_augmentation=False,
         normalize_img=True,
@@ -759,20 +853,21 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     importlib.reload(models)
     if args_dict["USE_PRETRAINED_MODEL"]:
         print(f'{" "*3}Loading pretrained model...')
-        # load model
-        model = tf.keras.models.load_model(args_dict["PATH_TO_PRETRAINED_MODEL"])
-        # replace the last dense layer to match the number of classes
-        intermediat_output = model.layers[-2].output
-        new_output = tf.keras.layers.Dense(
-            units=len(train_gen.class_indices),
-            input_shape=model.layers[-1].input_shape,
-            name="prediction",
-        )(intermediat_output)
-        # make sure that model layers are trainable
-        for layer in model.layers:
-            layer.trainable = False
-        model = tf.keras.Model(inputs=model.inputs, outputs=new_output)
-        print(model.summary())
+        if args_dict["MODEL_TYPE"] == "SDM4":
+            # load model
+            model = tf.keras.models.load_model(args_dict["PATH_TO_PRETRAINED_MODEL"])
+            # replace the last dense layer to match the number of classes
+            intermediat_output = model.layers[-2].output
+            new_output = tf.keras.layers.Dense(
+                units=len(train_gen.class_indices),
+                input_shape=model.layers[-1].input_shape,
+                name="prediction",
+            )(intermediat_output)
+            # make sure that model layers are trainable
+            for layer in model.layers:
+                layer.trainable = False
+            model = tf.keras.Model(inputs=model.inputs, outputs=new_output)
+            print(model.summary())
     else:
         print(f'{" "*3}Building model from scratch...')
         # build custom model
@@ -793,6 +888,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 use_age_thr_tabular_network=False,
                 use_gradCAM=args_dict["USE_GRADCAM"],
             )
+
         elif args_dict["MODEL_TYPE"] == "ResNet9":
             print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
             model = models.ResNet9(
@@ -800,11 +896,10 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 input_shape=input_shape,
                 use_age=args_dict["USE_AGE"],
                 use_age_thr_tabular_network=False,
-                use_gradCAM=args_dict["USE_GRADCAM"],
             )
         elif args_dict["MODEL_TYPE"] == "ViT":
             print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-            model = models.ViT_2(
+            model = models.ViT(
                 input_size=input_shape,
                 num_classes=args_dict["NBR_CLASSES"],
                 use_age=args_dict["USE_AGE"],
@@ -824,17 +919,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             )
 
         # ################################# COMPILE MODEL
-        # # get warmUP parameters
-        total_steps = int(
-            (train_steps / args_dict["BATCH_SIZE"]) * args_dict["MAX_EPOCHS"]
-        )
-        warmup_epoch_percentage = 0.10
-        warmup_steps = int(total_steps * warmup_epoch_percentage)
-        scheduled_lrs = tf_callbacks.WarmUpCosine(
-            learning_rate_base=args_dict["LEARNING_RATE"],
-            total_steps=total_steps,
-            warmup_learning_rate=0.0,
-            warmup_steps=warmup_steps,
+        learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+            args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
         )
 
         if args_dict["OPTIMIZER"] == "SGD":
@@ -845,15 +931,19 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 momentum=0.9,
                 nesterov=True,
             )
-        elif args_dict["OPTIMIZER"] == "ADAM":
-            print(f'{" "*6}Using Adam optimizer.')
-
-            # learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
-            #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
+            # optimizer = tf.keras.optimizers.SGD(
+            #     learning_rate=learning_rate_fn,
+            #     nesterov=True,
             # )
+        elif args_dict["OPTIMIZER"] == "ADAM":
+            print(f'{" "*6}Using AdamW optimizer.')
+
             optimizer = tfa.optimizers.AdamW(
                 learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
             )
+            # optimizer = tfa.optimizers.AdamW(
+            #     learning_rate=learning_rate_fn, weight_decay=0.0001
+            # )
 
     # wrap using LookAhead which helps smoothing out validation curves
     optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
@@ -883,14 +973,6 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         loss=loss,
         metrics=["accuracy"],
     )
-    # model.compile(
-    #     optimizer=optimizer,
-    #     loss=loss,
-    #     metrics=[
-    #         tf.keras.metrics.SparseCategoricalAccuracy(name="accuracy"),
-    #         tf.keras.metrics.SparseTopKCategoricalAccuracy(5, name="top-5-accuracy"),
-    #     ],
-    # )
 
     # ######################### SET MODEL CHECKPOINT
     best_model_path = os.path.join(save_model_path, "best_model_weights", "")
@@ -922,8 +1004,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         train_gen,
         steps_per_epoch=train_steps,
         shuffle=True,
-        validation_data=val_gen,
-        validation_steps=val_steps,
+        validation_data=train_gen,
+        validation_steps=train_steps,
         epochs=args_dict["MAX_EPOCHS"],
         verbose=1,
         callbacks=callbacks_list,
@@ -947,20 +1029,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # get the per_slice classification
     Ptest_softmax = []
     Ytest_categorical = []
-    if not args_dict["TFR_DATA"]:
-        for i in range(test_steps):
-            x, y = next(iter(test_gen))
-            Ytest_categorical.append(y)
-            Ptest_softmax.append(model.predict(x))
-        Ptest_softmax = np.row_stack(Ptest_softmax)
-    else:
-        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
-        next_element = iterator.get_next()
-        with tf.compat.v1.Session() as sess:
-            for _ in range(test_steps):
-                sample = sess.run(next_element)
-                Ytest_categorical.append(sample[1]["label"])
-        Ptest_softmax = model.predict(test_gen)
+    ds_iter = iter(test_gen)
+    ds_steps = test_steps
+    for i in range(ds_steps):
+        x, y = next(ds_iter)
+        Ytest_categorical.append(y)
+        Ptest_softmax.append(model.predict(x, verbose=0))
+    Ptest_softmax = np.row_stack(Ptest_softmax)
 
     Ptest = np.argmax(Ptest_softmax, axis=-1)
     Ytest_categorical = np.row_stack(Ytest_categorical)
@@ -1004,20 +1079,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # do the same for the validation dataset
     Pval_softmax = []
     Yval_categorical = []
-    if not args_dict["TFR_DATA"]:
-        for i in range(test_steps):
-            x, y = next(iter(val_gen))
-            Yval_categorical.append(y)
-            Pval_softmax.append(model.predict(x))
-        Pval_softmax = np.row_stack(Pval_softmax)
-    else:
-        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
-        next_element = iterator.get_next()
-        with tf.compat.v1.Session() as sess:
-            for _ in range(test_steps):
-                sample = sess.run(next_element)
-                Yval_categorical.append(sample[1]["label"])
-        Pval_softmax = model.predict(test_gen)
+    ds_iter = iter(val_gen)
+    ds_steps = val_steps
+    for i in range(ds_steps):
+        x, y = next(ds_iter)
+        Yval_categorical.append(y)
+        Pval_softmax.append(model.predict(x, verbose=0))
+    Pval_softmax = np.row_stack(Pval_softmax)
 
     Ptest = np.argmax(Pval_softmax, axis=-1)
     Yval_categorical = np.row_stack(Yval_categorical)
@@ -1050,7 +1118,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_PR*_validation",
+        saveName="last_model_PR_validation",
         draw=False,
     )
 
@@ -1059,20 +1127,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # get the per_slice classification
     Ptest_softmax = []
     Ytest_categorical = []
-    if not args_dict["TFR_DATA"]:
-        for i in range(test_steps):
-            x, y = next(iter(test_gen))
-            Ytest_categorical.append(y)
-            Ptest_softmax.append(model.predict(x))
-        Ptest_softmax = np.row_stack(Ptest_softmax)
-    else:
-        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
-        next_element = iterator.get_next()
-        with tf.compat.v1.Session() as sess:
-            for _ in range(test_steps):
-                sample = sess.run(next_element)
-                Ytest_categorical.append(sample[1]["label"])
-        Ptest_softmax = model.predict(test_gen)
+    ds_iter = iter(test_gen)
+    ds_steps = test_steps
+    for i in range(ds_steps):
+        x, y = next(ds_iter)
+        Ytest_categorical.append(y)
+        Ptest_softmax.append(model.predict(x, verbose=0))
+    Ptest_softmax = np.row_stack(Ptest_softmax)
 
     Ptest = np.argmax(Ptest_softmax, axis=-1)
 
@@ -1117,20 +1178,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # do the same for the validation dataset
     Pval_softmax = []
     Yval_categorical = []
-    if not args_dict["TFR_DATA"]:
-        for i in range(test_steps):
-            x, y = next(iter(val_gen))
-            Yval_categorical.append(y)
-            Pval_softmax.append(model.predict(x))
-        Pval_softmax = np.row_stack(Pval_softmax)
-    else:
-        iterator = tf.compat.v1.data.make_one_shot_iterator(test_gen)
-        next_element = iterator.get_next()
-        with tf.compat.v1.Session() as sess:
-            for _ in range(test_steps):
-                sample = sess.run(next_element)
-                Yval_categorical.append(sample[1]["label"])
-        Pval_softmax = model.predict(test_gen)
+    ds_iter = iter(val_gen)
+    ds_steps = val_steps
+    for i in range(ds_steps):
+        x, y = next(ds_iter)
+        Yval_categorical.append(y)
+        Pval_softmax.append(model.predict(x, verbose=0))
+    Pval_softmax = np.row_stack(Pval_softmax)
 
     Ptest = np.argmax(Pval_softmax, axis=-1)
     Yval_categorical = np.row_stack(Yval_categorical)
@@ -1143,7 +1197,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_CM_validation",
+        saveName="best_model_CM_validation",
         draw=False,
     )
     utilities.plotROC(
@@ -1153,7 +1207,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_ROC_validation",
+        saveName="best_model_ROC_validation",
         draw=False,
     )
     utilities.plotPR(
@@ -1163,7 +1217,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         if args_dict["NBR_CLASSES"] == 2
         else ["ASTR", "EP", "MED"],
         savePath=save_model_path,
-        saveName="last_model_PR*_validation",
+        saveName="best_model_PR_validation",
         draw=False,
     )
 

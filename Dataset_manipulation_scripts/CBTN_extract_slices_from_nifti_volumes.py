@@ -408,7 +408,7 @@ else:
     args_dict = {
         "DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/FILTERED_DATASET_20230117",
         "FILTER_FILE": "/flush/iulta54/Research/Data/CBTN/CSV_files/checked_files_min_slice_number_50_maxres_1mm_20230116.xlsx",
-        "SAVE_PATH": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES",
+        "SAVE_PATH": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_test",
         "SLICE_SHAPE": (224, 224),
         "RANDOM_SEED_NUMBER": 29122009,
     }
@@ -448,7 +448,7 @@ info = pd.read_excel(args_dict["FILTER_FILE"])
 info = info[info.final_check == "passed"].reset_index(drop=True)
 
 # %% LOOP THROUGH THE REMAINING (PER MODALITY) AND SAVE SLICES
-modalities = ["T2", "T1"]
+modalities = ["T2"]
 processed_indexes = dict.fromkeys(modalities)
 total_slice_counter = 0
 for modality in modalities:

@@ -42,7 +42,7 @@ print(f'\n{"-"*len(to_print)}')
 print(to_print)
 print(f'{"-"*len(to_print)}\n')
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -78,7 +78,7 @@ else:
     args_dict = {
         "PATH_TO_CBTN_SLICES": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
         "PATH_TO_CBTN_GRADCAMS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DetectionModels/DetectionModel_SDM4_t2_CBTN_loss_CCE_lr_1e-05_batchSize_32_pretrained_False_useAge_False/Explainability_analysis/GradCAMs",
-        "PATH_TO_TABULAR_DATA": "/flush/iulta54/Research/Data/CBTN/CSV_files/adc_all_files_from_Tamara.xlsx",
+        "PATH_TO_TABULAR_DATA": "/flush/iulta54/Research/Data/CBTN/CSV_files/t2_t1c_all_files.xlsx",
         "SAVE_PATH": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR/T2",
     }
 
@@ -136,7 +136,7 @@ skipped_files = []
 save_non_tumor_slices = True
 saved_idx = 0
 # load image data and gradCAM for each slice
-for idx, f in enumerate(img_and_gradCAM_files):
+for idx, f in enumerate(img_and_gradCAM_files[7729::]):
     print(
         f"Working on {idx+1:{len(str(len(img_and_gradCAM_files)))}d} of {len(img_and_gradCAM_files)} (saved {saved_idx+1}) \r",
         end="",
@@ -187,6 +187,7 @@ for idx, f in enumerate(img_and_gradCAM_files):
                 + "_".join(file_name.split("_")[1::])
                 + ".tfrecords"
             )
+            loc = "infra"
         else:
             file_name = (
                 file_name.split("_")[0]
@@ -194,6 +195,7 @@ for idx, f in enumerate(img_and_gradCAM_files):
                 + "_".join(file_name.split("_")[1::])
                 + ".tfrecords"
             )
+            loc = "supra"
 
         writer = tf.io.TFRecordWriter(os.path.join(args_dict["SAVE_PATH"], file_name))
 
@@ -208,6 +210,7 @@ for idx, f in enumerate(img_and_gradCAM_files):
             "slice_with_tumor": _int64_feature(int(slice_with_tumor)),
             "label_3_classes": _int64_feature(int(label_3_classes)),
             "label_5_classes": _int64_feature(int(label_5_classes)),
+            "tumor_location": _bytes_feature(tf.compat.as_bytes(loc)),
         }
 
         # wrap feature with the Example class

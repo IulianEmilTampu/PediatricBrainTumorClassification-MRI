@@ -14,8 +14,8 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             "loss": [],
             "val_loss": [],
             "learning_rate": [],
-            "mcc": [],
-            "val_mcc": [],
+            "MatthewsCorrelationCoefficient": [],
+            "val_MatthewsCorrelationCoefficient": [],
         }
 
     def get_epoch_learning_rate(self, epoch):
@@ -44,8 +44,8 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             [
                 self.history[key].extend([logs[key]])
                 for key in [
-                    "mcc",
-                    "val_mcc",
+                    "MatthewsCorrelationCoefficient",
+                    "val_MatthewsCorrelationCoefficient",
                 ]
             ]
         except:
@@ -86,16 +86,16 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             plt.title("Training and Validation Loss")
 
             # plot mcc if available
-            if self.history["mcc"]:
+            if self.history["MatthewsCorrelationCoefficient"]:
                 plt.subplot(3, 1, 3)
                 plt.plot(
                     x_,
-                    self.history["mcc"],
+                    self.history["MatthewsCorrelationCoefficient"],
                     label="Training MCC",
                 )
                 plt.plot(
                     x_,
-                    self.history["val_mcc"],
+                    self.history["val_MatthewsCorrelationCoefficient"],
                     label="Validation MCC",
                 )
                 plt.legend(loc="lower right")

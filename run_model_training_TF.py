@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = False
+su_debug_flag = True
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -227,20 +227,20 @@ else:
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
         "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.0001,
+        "LEARNING_RATE": 0.00001,
         "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 25,
-        "USE_PRETRAINED_MODEL": False,
+        "MAX_EPOCHS": 50,
+        "USE_PRETRAINED_MODEL": True,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
         "USE_AGE": False,
         "USE_GRADCAM": False,
         "LOSS": "MCC_and_CCE_Loss",
-        "RANDOM_SEED_NUMBER": 5678,
+        "RANDOM_SEED_NUMBER": 1214,
         "MR_MODALITIES": ["T2"],
         "DEBUG_DATASET_FRACTION": 0.6,
         "TFR_DATA": True,
-        "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TEST_reduce_overfitting_adding_LeakyRelu_InstanceNorm_dropOut_v3",
+        "MODEL_TYPE": "EfficientNet",
+        "MODEL_NAME": "TEST_model_capacity_EfficientNet_preTrained",
         "OPTIMIZER": "ADAM",
     }
 
@@ -659,34 +659,41 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     tr_files = per_fold_training_files[cv_f]
     random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(tr_files)
 
-    train_gen, train_steps = data_gen(
-        file_paths=tr_files[
-            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
-        ],
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=1000,
-        data_augmentation=False,
-        normalize_img=False,
-        img_norm_values=None,
-        return_gradCAM=args_dict["USE_GRADCAM"],
-        normalize_gradCAM=False,
-        gradCAM_norm_values=None,
-        return_age=args_dict["USE_AGE"],
-        normalize_age=False,
-        age_norm_values=None,
-        dataset_type="test",
-        nbr_classes=args_dict["NBR_CLASSES"],
-    )
+    if not all(
+        [args_dict["USE_PRETRAINED_MODEL"], args_dict["MODEL_TYPE"] == "EfficientNet"]
+    ):
+        flag_normalization = True
+        train_gen, train_steps = data_gen(
+            file_paths=tr_files[
+                0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
+            ],
+            input_size=target_size,
+            batch_size=args_dict["BATCH_SIZE"],
+            buffer_size=1000,
+            data_augmentation=False,
+            normalize_img=False,
+            img_norm_values=None,
+            return_gradCAM=args_dict["USE_GRADCAM"],
+            normalize_gradCAM=False,
+            gradCAM_norm_values=None,
+            return_age=args_dict["USE_AGE"],
+            normalize_age=False,
+            age_norm_values=None,
+            dataset_type="test",
+            nbr_classes=args_dict["NBR_CLASSES"],
+        )
 
-    # get normalization stats
-    print(f'{" "*6}Getting normalization stats from training generator...')
-    norm_stats = data_utilities.get_normalization_values(
-        train_gen,
-        train_steps,
-        return_age_norm_values=args_dict["USE_AGE"],
-        return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
-    )
+        # get normalization stats
+        print(f'{" "*6}Getting normalization stats from training generator...')
+        norm_stats = data_utilities.get_normalization_values(
+            train_gen,
+            train_steps,
+            return_age_norm_values=args_dict["USE_AGE"],
+            return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
+        )
+    else:
+        flag_normalization = False
+        norm_stats = None
 
     # build actuall training datagen with normalized values
     train_gen, train_steps = data_gen(
@@ -697,7 +704,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
         data_augmentation=False,
-        normalize_img=True,
+        normalize_img=True if flag_normalization else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -726,7 +733,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
         data_augmentation=False,
-        normalize_img=True,
+        normalize_img=True if flag_normalization else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -750,7 +757,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=10,
         data_augmentation=False,
-        normalize_img=True,
+        normalize_img=True if flag_normalization else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -773,7 +780,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # CREATE MODEL
     # ------------
     importlib.reload(models)
-    if args_dict["USE_PRETRAINED_MODEL"]:
+    if all([args_dict["USE_PRETRAINED_MODEL"], args_dict["MODEL_TYPE"] == "SDM4"]):
         print(f'{" "*3}Loading pretrained model...')
         if args_dict["MODEL_TYPE"] == "SDM4":
             # load model
@@ -834,6 +841,16 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 transformer_layers=8,
                 transformer_units=None,
                 debug=False,
+            )
+        elif args_dict["MODEL_TYPE"] == "EfficientNet":
+            print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+            model = models.EfficientNet(
+                num_classes=args_dict["NBR_CLASSES"],
+                input_shape=input_shape,
+                use_age=args_dict["USE_AGE"],
+                use_age_thr_tabular_network=False,
+                pretrained=args_dict["USE_PRETRAINED_MODEL"],
+                froze_weights=True,
             )
         else:
             raise ValueError(
@@ -907,6 +924,15 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 num_classes=args_dict["NBR_CLASSES"]
             ),
         ],
+    )
+
+    # print model architecture
+    tf.keras.utils.plot_model(
+        model,
+        to_file=os.path.join(save_model_path, "model_architecture.jpeg"),
+        show_shapes=True,
+        show_layer_activations=True,
+        expand_nested=True,
     )
 
     # ######################### SET MODEL CHECKPOINT
@@ -1160,7 +1186,11 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
 
     # ## SAVE FINAL CURVES
     print(f'{" "*6}Saving training curves and tabular evaluation data...')
-    fig, ax = plt.subplots(figsize=(20, 15), nrows=2, ncols=1)
+    fig, ax = plt.subplots(
+        figsize=(20, 15),
+        nrows=3 if history.history["MatthewsCorrelationCoefficient"] else 2,
+        ncols=1,
+    )
     # print training loss
     ax[0].plot(history.history["loss"], label="training loss")
     ax[0].plot(history.history["val_loss"], label="validation loss")
@@ -1170,9 +1200,24 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     ax[1].plot(history.history["accuracy"], label="training accuracy")
     ax[1].plot(history.history["val_accuracy"], label="validation accuracy")
     ax[1].set_title(
-        f'Test accuracy -> (last)  {summary_test[str(cv_f+1)]["last"]["overall_accuracy"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["overall_accuracy"]:0.3f}'
+        f'Test MCC -> (last)  {summary_test[str(cv_f+1)]["last"]["overall_accuracy"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["overall_accuracy"]:0.3f}'
     )
     ax[1].legend()
+
+    # print training MCC
+    if history.history["MatthewsCorrelationCoefficient"]:
+        ax[2].plot(
+            history.history["MatthewsCorrelationCoefficient"], label="training MCC"
+        )
+        ax[2].plot(
+            history.history["val_MatthewsCorrelationCoefficient"],
+            label="validation MCC",
+        )
+        ax[2].set_title(
+            f'Test accuracy -> (last)  {summary_test[str(cv_f+1)]["last"]["matthews_correlation_coefficient"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["matthews_correlation_coefficient"]:0.3f}'
+        )
+        ax[2].legend()
+
     fig.savefig(os.path.join(save_model_path, "training_curves.png"))
     plt.close(fig)
 

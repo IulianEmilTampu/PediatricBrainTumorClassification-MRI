@@ -160,6 +160,7 @@ def _parse_function(
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
     to_categorical: bool = True,
+    output_as_RGB: bool = False,
 ):
     """
     This function parses a single TF examples.
@@ -252,16 +253,34 @@ def _parse_function(
         # label = tf.keras.utils.to_categorical(label, nbr_classes, dtype=tf.float32)
 
     if all([return_img, return_gradCAM, return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        # fix number of output channels (usually 3 for pre-trained models on imageNet)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image, "age": age}, {"label": label}
+
     elif all([return_img, return_gradCAM, not return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image}, {"label": label}
     elif all([return_img, not return_gradCAM, return_age]):
-        return {"image": tf.expand_dims(image, axis=-1), "age": age}, {"label": label}
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
+        return {"image": image, "age": age}, {"label": label}
     elif all([return_img, not return_gradCAM, not return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
         return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
     elif all([not return_img, return_gradCAM, return_age]):
+        if output_as_RGB:
+            gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
         return ({"image": gradCAM, "age": age}, {"label": label})
     elif all([not return_img, not return_gradCAM, return_age]):
         return {"age": age}, {"label": label}
@@ -285,6 +304,7 @@ def _parse_function_withouth_TF_op(
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
     to_categorical: bool = True,
+    output_as_RGB: bool = False,
 ):
     """
     This function parses a single TF examples.
@@ -349,16 +369,34 @@ def _parse_function_withouth_TF_op(
         label = tf.cast(tf.one_hot(label, nbr_classes), dtype=tf.float32)
 
     if all([return_img, return_gradCAM, return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        # fix number of output channels (usually 3 for pre-trained models on imageNet)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image, "age": age}, {"label": label}
+
     elif all([return_img, return_gradCAM, not return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image}, {"label": label}
     elif all([return_img, not return_gradCAM, return_age]):
-        return {"image": tf.expand_dims(image, axis=-1), "age": age}, {"label": label}
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
+        return {"image": image, "age": age}, {"label": label}
     elif all([return_img, not return_gradCAM, not return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
         return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
     elif all([not return_img, return_gradCAM, return_age]):
+        if output_as_RGB:
+            gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
         return ({"image": gradCAM, "age": age}, {"label": label})
     elif all([not return_img, not return_gradCAM, return_age]):
         return {"age": age}, {"label": label}
@@ -469,6 +507,7 @@ def tfrs_data_generator(
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
     to_categorical: bool = True,
+    output_as_RGB: bool = False,
 ):
     """
     Function that given a list of TFRecord files returns a data generator on them.
@@ -533,6 +572,7 @@ def tfrs_data_generator(
                     age_norm_values=age_norm_values,
                     nbr_classes=nbr_classes,
                     to_categorical=to_categorical,
+                    output_as_RGB=output_as_RGB,
                 )
             )
         ),

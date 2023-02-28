@@ -25,6 +25,76 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow_addons as tfa
 
+# %% EfficientNet
+
+
+def EfficientNet(
+    num_classes: int,
+    input_shape: Union[list, tuple],
+    use_age: bool = False,
+    use_age_thr_tabular_network: bool = False,
+    debug: bool = False,
+    pretrained: bool = True,
+    froze_weights: bool = False,
+):
+
+    denseRegularizer = "L2"
+    denseConstrain = None
+    denseActivation = "relu"
+    denseDropoutRate = 0.2
+
+    # use EfficientNet from keras as feature extractor
+    efficientNet = tf.keras.applications.EfficientNetB0(
+        include_top=False, weights="imagenet" if pretrained else None, pooling="avg"
+    )
+
+    # froze model layers
+    if froze_weights:
+        efficientNet.trainable = False
+
+    # build model
+    img_input = Input(shape=input_shape, name="image")
+    # image through feature extractor
+    x = efficientNet(img_input)
+
+    # classifier
+    x = Dense(
+        units=36,
+        activation=denseActivation,
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+    )(x)
+    x = BatchNormalization()(x)
+    x = Dropout(denseDropoutRate)(x)
+
+    if use_age:
+        # @ToDo Implement tabular network
+        # if use_age_thr_tabular_network:
+        # else:
+        age_input = Input(shape=(1,), name="age")
+        enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
+        x = tf.keras.layers.concatenate([x, enc_age])
+
+    output = Dense(
+        units=num_classes,
+        activation="softmax",
+        name="label",
+    )(x)
+
+    if use_age:
+        model = tf.keras.Model(
+            inputs=[img_input, age_input], outputs=output, name="EfficientNet"
+        )
+    else:
+        model = tf.keras.Model(inputs=img_input, outputs=output, name="EfficientNet")
+
+    # print model if needed
+    if debug is True:
+        print(model.summary())
+    print(model.summary())
+    return model
+
+
 # %% SIMPLE DETECTION MODEL
 def SimpleDetectionModel_TF(
     num_classes: int,
@@ -36,45 +106,6 @@ def SimpleDetectionModel_TF(
     use_gradCAM: bool = False,
     debug: bool = False,
 ):
-    def conv_block(
-        input,
-        nbr_filters,
-        kernel_size,
-        normalization,
-        activation,
-        pool_size,
-        dropout_rate,
-        kernel_regularizer,
-        kernel_constraint,
-    ):
-        x = Conv2D(
-            filters=nbr_filters,
-            kernel_size=kernel_size,
-            activation=None,
-            padding="same",
-            kernel_regularizer=kernel_regularizer,
-            kernel_constraint=kernel_constraint,
-        )(input)
-
-        # x = tfa.layers.InstanceNormalization()(x)
-        x = normalization(x)
-        x = activation(x)
-
-        x = Conv2D(
-            filters=nbr_filters,
-            kernel_size=kernel_size,
-            activation=None,
-            padding="same",
-            kernel_regularizer=kernel_regularizer,
-            kernel_constraint=kernel_constraint,
-        )(x)
-
-        x = normalization(x)
-        x = activation(x)
-
-        x = MaxPooling2D(pool_size=pool_size)(x)
-        x = tf.keras.layers.SpatialDropout2D(rate=dropout_rate)(x)
-        return x
 
     convRegularizer = tf.keras.regularizers.l2(l=0.00001)
     denseRegularizer = "L2"
@@ -85,14 +116,14 @@ def SimpleDetectionModel_TF(
     convActivation = None
     denseActivation = "relu"
 
-    convDropoutRate = 0.3
+    convDropoutRate = 0.4
     denseDropoutRate = 0.2
 
     # building  model
     img_input = Input(shape=input_shape, name="image")
 
     x = img_input
-    for nbr_filter in [64, 128, 256, 512]:
+    for nbr_filter in [128, 128, 128, 128]:
         x = Conv2D(
             filters=nbr_filter,
             kernel_size=kernel_size,
@@ -101,10 +132,10 @@ def SimpleDetectionModel_TF(
             kernel_regularizer=convRegularizer,
         )(x)
 
-        x = tfa.layers.InstanceNormalization()(x)
-        x = tf.keras.layers.LeakyReLU(
-            alpha=0.3,
-        )(x)
+        # x = tfa.layers.InstanceNormalization()(x)
+        # x = tf.keras.layers.LeakyReLU(
+        #     alpha=0.3,
+        # )(x)
         x = Conv2D(
             filters=nbr_filter,
             kernel_size=kernel_size,
@@ -240,11 +271,12 @@ def SimpleDetectionModel_TF(
     x = GlobalAveragePooling2D()(x)
 
     x = Dense(
-        units=1024,
+        units=512,
         activation=denseActivation,
         kernel_regularizer=denseRegularizer,
         kernel_constraint=denseConstrain,
     )(x)
+
     # x = tfa.layers.InstanceNormalization()(x)
     # x = tf.keras.layers.LeakyReLU(
     #     alpha=0.3,

@@ -395,7 +395,7 @@ def age_normalization(sample, label, age_norm_values: tuple):
     return sample, label
 
 
-def flip(sample, label, random=0.5):
+def flip(sample, label, random=0.1):
     # perform random flip with probability random
     if tf.random.uniform(()) <= random:
         aug_img = tf.expand_dims(sample["image"], 0)
@@ -411,7 +411,7 @@ def flip(sample, label, random=0.5):
         return sample, label
 
 
-def brightness(sample, label, max_delta=0.5, random=0.5):
+def brightness(sample, label, max_delta=0.5, random=0.1):
     # perform random brightness with probability random
     if tf.random.uniform(()) <= random:
         # aug_img = tf.expand_dims(sample["image"], 0)
@@ -426,7 +426,7 @@ def brightness(sample, label, max_delta=0.5, random=0.5):
         return sample, label
 
 
-def rotation(sample, label, random=0.5):
+def rotation(sample, label, random=0.1):
     # perform random rotation with probability random
     if tf.random.uniform(()) <= random:
         aug_img = tf.expand_dims(sample["image"], 0)
@@ -541,8 +541,8 @@ def tfrs_data_generator(
 
     # make the training dataset to iterate forever
     if dataset_type == "train":
+        dataset = dataset.shuffle(buffer_size=buffer_size)
         dataset = dataset.repeat()
-        # dataset = dataset.shuffle(buffer_size=buffer_size)
 
     """ DATA NORMALIZATION """
     if all([return_img, normalize_img]):
@@ -553,7 +553,7 @@ def tfrs_data_generator(
         )
 
     """ DATA AUGMENTATION """
-    if all([dataset_type != "test", data_augmentation == True, return_img]):
+    if all([dataset_type == "train", data_augmentation == True, return_img]):
         dataset = dataset.map(rotation)
         dataset = dataset.map(flip)
         dataset = dataset.map(brightness)

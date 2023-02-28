@@ -54,3 +54,29 @@ class MCC_Loss(tf.keras.losses.Loss):
         mcc = tf.math.divide(numerator, denominator + 1.0)
 
         return 1 - mcc
+
+
+class MCC_and_CCE_Loss(tf.keras.losses.Loss):
+    def __init__(self):
+        super(MCC_and_CCE_Loss, self).__init__()
+
+    def call(self, y_true, y_pred):
+        tp = tf.math.reduce_sum(tf.math.multiply(y_pred, y_true), axis=-1)
+        tn = tf.math.reduce_sum(tf.math.multiply((1 - y_pred), (1 - y_true)), axis=-1)
+        fp = tf.math.reduce_sum(tf.math.multiply(y_pred, (1 - y_true)), axis=-1)
+        fn = tf.math.reduce_sum(tf.math.multiply((1 - y_pred), y_true), axis=-1)
+
+        numerator = tf.math.multiply(tp, tn) - tf.math.multiply(fp, fn)
+        denominator = tf.math.sqrt(
+            tf.math.add(tp, fp)
+            * tf.math.add(tp, fn)
+            * tf.math.add(tn, fp)
+            * tf.math.add(tn, fn)
+        )
+
+        # Adding 1 to the denominator to avoid divide-by-zero errors.
+        mcc = tf.math.divide(numerator, denominator + 0.0000006)
+
+        cce = tf.keras.losses.CategoricalCrossentropy()
+
+        return (1 - mcc) + cce(y_true, y_pred)

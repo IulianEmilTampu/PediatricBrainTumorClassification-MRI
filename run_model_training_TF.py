@@ -37,12 +37,11 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
 # --------------------------------------
-print("WHAT IS WRONG")
 if not su_debug_flag:
     parser = argparse.ArgumentParser(
         description="Run cross validation training for tumor detection."
@@ -228,20 +227,20 @@ else:
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
         "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.00001,
+        "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 50,
+        "MAX_EPOCHS": 25,
         "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
-        "USE_AGE": True,
-        "USE_GRADCAM": True,
-        "LOSS": "CCE",
-        "RANDOM_SEED_NUMBER": 30122009,
+        "USE_AGE": False,
+        "USE_GRADCAM": False,
+        "LOSS": "MCC_and_CCE_Loss",
+        "RANDOM_SEED_NUMBER": 5678,
         "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 0.8,
+        "DEBUG_DATASET_FRACTION": 0.6,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TEST_new_data_gen",
+        "MODEL_NAME": "TEST_reduce_overfitting_adding_LeakyRelu_InstanceNorm_dropOut_v3",
         "OPTIMIZER": "ADAM",
     }
 
@@ -368,7 +367,7 @@ class_weights_values = list(
 args_dict["CLASS_WEIGHTS"] = {}
 
 for c in range(args_dict["NBR_CLASSES"]):
-    args_dict["CLASS_WEIGHTS"][c] = class_weights_values[c]
+    args_dict["CLASS_WEIGHTS"][c] = class_weights_values[c] ** 2
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
@@ -483,83 +482,6 @@ print(
     f"Training files:{len(per_fold_training_files[-1])}\nValidation files: {len(per_fold_validation_files[-1])}"
 )
 
-# %% check dataset
-
-# importlib.reload(data_utilities)
-# target_size = (224, 224)
-# random.shuffle(test_files)
-
-# gen, gen_steps = data_utilities.tfrs_data_generator(
-#     file_paths=test_files,
-#     input_size=target_size,
-#     batch_size=32,
-#     buffer_size=1000,
-#     data_augmentation=True,
-#     normalize_img=False,
-#     return_age=True,
-#     normalize_age=True,
-#     return_gradCAM=True,
-#     normalize_gradCAM=False,
-#     dataset_type="train",
-#     nbr_classes=args_dict["NBR_CLASSES"],
-# )
-
-# norm_stast = data_utilities.get_normalization_values(
-#     gen, gen_steps, return_age_norm_values=True, return_gradCAM_norm_values=True
-# )
-
-# gen, gen_steps = data_utilities.tfrs_data_generator(
-#     file_paths=test_files,
-#     input_size=target_size,
-#     batch_size=32,
-#     buffer_size=1000,
-#     data_augmentation=True,
-#     normalize_img=True,
-#     return_age=True,
-#     normalize_age=True,
-#     age_norm_values=norm_stast[-1],
-#     return_gradCAM=True,
-#     normalize_gradCAM=False,
-#     gradCAM_norm_values=norm_stast[1],
-#     dataset_type="train",
-#     nbr_classes=args_dict["NBR_CLASSES"],
-# )
-
-# model = models.SimpleDetectionModel_TF(
-#     num_classes=args_dict["NBR_CLASSES"],
-#     input_shape=(224, 224, 2),
-#     kernel_size=(3, 3),
-#     pool_size=(2, 2),
-#     use_age=args_dict["USE_AGE"],
-#     use_age_thr_tabular_network=False,
-#     use_gradCAM=args_dict["USE_GRADCAM"],
-# )
-
-# loss = tf.keras.losses.CategoricalCrossentropy()
-# optimizer = tf.keras.optimizers.SGD(
-#     learning_rate=args_dict["LEARNING_RATE"],
-#     decay=1e-6,
-#     momentum=0.9,
-#     nesterov=True,
-# )
-# model.compile(
-#     optimizer=optimizer,
-#     loss=loss,
-#     metrics=["accuracy"],
-# )
-
-
-# temp_class_weight = {0: 100, 1: 100, 2: 100}
-# history = model.fit(
-#     gen,
-#     steps_per_epoch=gen_steps,
-#     shuffle=True,
-#     validation_data=gen,
-#     validation_steps=gen_steps,
-#     epochs=args_dict["MAX_EPOCHS"],
-#     verbose=1,
-#     class_weight=temp_class_weight,
-# )
 # %% test generators
 
 look_at_generator = False
@@ -587,12 +509,12 @@ if look_at_generator:
 
             if show_gradCAM:
                 ax[0].imshow(image_batch["image"][i, :, :, 0], cmap="gray")
-                label = label_batch["label"][i]
+                label = label_batch[i]
                 ax[0].set_title(class_names[label.argmax()])
                 ax[1].imshow(image_batch["image"][i, :, :, 1], cmap="gray")
             else:
                 ax.imshow(image_batch["image"][i, :, :, 0], cmap="gray")
-                label = label_batch["label"][i]
+                label = label_batch[i]
                 ax.set_title(class_names[label.numpy().argmax()])
             plt.show(fig)
 
@@ -604,7 +526,7 @@ if look_at_generator:
                 ax[0].hist(
                     image_batch["image"][:, :, :, 0].numpy().ravel(),
                 )
-                label = label_batch["label"][i]
+                label = label_batch[i]
                 ax[0].set_title("Histogram of image pixel values")
                 ax[1].hist(
                     image_batch["image"][:, :, :, 1].numpy().ravel(),
@@ -613,7 +535,7 @@ if look_at_generator:
                 ax.hist(
                     image_batch["image"][:, :, :, 0].numpy().ravel(),
                 )
-                label = label_batch["label"][i]
+                label = label_batch[i]
                 ax.set_title("Histogram of image pixel values")
 
     def show_batched_example(dataset, class_names=["0", "1"], nbr_images: int = 1):
@@ -622,7 +544,7 @@ if look_at_generator:
         plt.figure(figsize=(10, 10))
         for i in range(nbr_images):
             plt.imshow(image_batch["image"][i, :, :, 1], cmap="gray")
-            label = label_batch["label"][i]
+            label = label_batch.numpy()[i]
             plt.title(class_names[label.numpy().argmax()])
             plt.axis("off")
 
@@ -930,6 +852,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 decay=1e-6,
                 momentum=0.9,
                 nesterov=True,
+                clipvalue=0.5,
             )
             # optimizer = tf.keras.optimizers.SGD(
             #     learning_rate=learning_rate_fn,
@@ -946,12 +869,19 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             # )
 
     # wrap using LookAhead which helps smoothing out validation curves
-    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
+    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.7)
 
     if args_dict["LOSS"] == "MCC":
         print(f'{" "*6}Using MCC loss.')
         importlib.reload(losses)
         loss = losses.MCC_Loss()
+        what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
+            num_classes=args_dict["NBR_CLASSES"]
+        )
+    elif args_dict["LOSS"] == "MCC_and_CCE_Loss":
+        print(f'{" "*6}Using sum of MCC and CCE loss.')
+        importlib.reload(losses)
+        loss = losses.MCC_and_CCE_Loss()
         what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
             num_classes=args_dict["NBR_CLASSES"]
         )
@@ -971,7 +901,12 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     model.compile(
         optimizer=optimizer,
         loss=loss,
-        metrics=["accuracy"],
+        metrics=[
+            "accuracy",
+            tfa.metrics.MatthewsCorrelationCoefficient(
+                num_classes=args_dict["NBR_CLASSES"]
+            ),
+        ],
     )
 
     # ######################### SET MODEL CHECKPOINT
@@ -1003,9 +938,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     history = model.fit(
         train_gen,
         steps_per_epoch=train_steps,
-        shuffle=True,
-        validation_data=train_gen,
-        validation_steps=train_steps,
+        validation_data=val_gen,
+        validation_steps=val_steps,
         epochs=args_dict["MAX_EPOCHS"],
         verbose=1,
         callbacks=callbacks_list,
@@ -1024,7 +958,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # MODEL EVALUATION
     # ------------------
     importlib.reload(utilities)
-
+    print(f'{" "*6}Evaluationg Last model on testing data.')
     # ###################### LAST MODEL
     # get the per_slice classification
     Ptest_softmax = []
@@ -1077,6 +1011,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # do the same for the validation dataset
+    print(f'{" "*6}Evaluationg Last model on validation data.')
     Pval_softmax = []
     Yval_categorical = []
     ds_iter = iter(val_gen)
@@ -1123,6 +1058,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # ###################### BEST MODEL
+    print(f'{" "*6}Evaluationg Best model on testing data.')
     model.load_weights(best_model_path)
     # get the per_slice classification
     Ptest_softmax = []
@@ -1176,6 +1112,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # do the same for the validation dataset
+    print(f'{" "*6}Evaluationg Best model on validation data.')
     Pval_softmax = []
     Yval_categorical = []
     ds_iter = iter(val_gen)
@@ -1222,6 +1159,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # ## SAVE FINAL CURVES
+    print(f'{" "*6}Saving training curves and tabular evaluation data...')
     fig, ax = plt.subplots(figsize=(20, 15), nrows=2, ncols=1)
     # print training loss
     ax[0].plot(history.history["loss"], label="training loss")
@@ -1290,6 +1228,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         )
     writer.writerows(csv_rows)
     csv_file.close()
+    print(f'{" "*6}Done! To the next fold.')
 ## SAVE SUMMARY FOR ALL THE FOLDS IN ONE FILE
 summary_file = os.path.join(args_dict["SAVE_PATH"], f"tabular_test_summary.csv")
 csv_file = open(summary_file, "w")

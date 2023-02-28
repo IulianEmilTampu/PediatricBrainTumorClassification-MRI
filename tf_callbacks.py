@@ -14,6 +14,8 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             "loss": [],
             "val_loss": [],
             "learning_rate": [],
+            "mcc": [],
+            "val_mcc": [],
         }
 
     def get_epoch_learning_rate(self, epoch):
@@ -37,6 +39,18 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             self.history[key].extend([logs[key]])
             for key in ["accuracy", "val_accuracy", "loss", "val_loss"]
         ]
+        # try to add mcc if is avaliable
+        try:
+            [
+                self.history[key].extend([logs[key]])
+                for key in [
+                    "mcc",
+                    "val_mcc",
+                ]
+            ]
+        except:
+            pass
+
         # self.history["learning_rate"].extend([tf.keras.backend.eval(self.model.optimizer.lr)])
         self.history["learning_rate"].extend([self.get_epoch_learning_rate(epoch)])
         # save graphs
@@ -70,6 +84,23 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
             )
             plt.legend(loc="upper right")
             plt.title("Training and Validation Loss")
+
+            # plot mcc if available
+            if self.history["mcc"]:
+                plt.subplot(3, 1, 3)
+                plt.plot(
+                    x_,
+                    self.history["mcc"],
+                    label="Training MCC",
+                )
+                plt.plot(
+                    x_,
+                    self.history["val_mcc"],
+                    label="Validation MCC",
+                )
+                plt.legend(loc="lower right")
+                plt.title("Training and Validation MCC")
+
             plt.savefig(os.path.join(self.save_path, "acc_loss.png"))
             plt.close()
 

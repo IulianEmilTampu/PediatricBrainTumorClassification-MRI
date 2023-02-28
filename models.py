@@ -25,7 +25,6 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow_addons as tfa
 
-
 # %% SIMPLE DETECTION MODEL
 def SimpleDetectionModel_TF(
     num_classes: int,
@@ -37,75 +36,234 @@ def SimpleDetectionModel_TF(
     use_gradCAM: bool = False,
     debug: bool = False,
 ):
+    def conv_block(
+        input,
+        nbr_filters,
+        kernel_size,
+        normalization,
+        activation,
+        pool_size,
+        dropout_rate,
+        kernel_regularizer,
+        kernel_constraint,
+    ):
+        x = Conv2D(
+            filters=nbr_filters,
+            kernel_size=kernel_size,
+            activation=None,
+            padding="same",
+            kernel_regularizer=kernel_regularizer,
+            kernel_constraint=kernel_constraint,
+        )(input)
+
+        # x = tfa.layers.InstanceNormalization()(x)
+        x = normalization(x)
+        x = activation(x)
+
+        x = Conv2D(
+            filters=nbr_filters,
+            kernel_size=kernel_size,
+            activation=None,
+            padding="same",
+            kernel_regularizer=kernel_regularizer,
+            kernel_constraint=kernel_constraint,
+        )(x)
+
+        x = normalization(x)
+        x = activation(x)
+
+        x = MaxPooling2D(pool_size=pool_size)(x)
+        x = tf.keras.layers.SpatialDropout2D(rate=dropout_rate)(x)
+        return x
+
+    convRegularizer = tf.keras.regularizers.l2(l=0.00001)
+    denseRegularizer = "L2"
+
+    convConstrain = None
+    denseConstrain = None
+
+    convActivation = None
+    denseActivation = "relu"
+
+    convDropoutRate = 0.3
+    denseDropoutRate = 0.2
+
     # building  model
     img_input = Input(shape=input_shape, name="image")
 
-    x = Conv2D(filters=64, kernel_size=kernel_size, activation="relu", padding="same")(
-        img_input
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = Conv2D(filters=64, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = MaxPooling2D(pool_size=pool_size)(x)
+    x = img_input
+    for nbr_filter in [64, 128, 256, 512]:
+        x = Conv2D(
+            filters=nbr_filter,
+            kernel_size=kernel_size,
+            activation=convActivation,
+            padding="same",
+            kernel_regularizer=convRegularizer,
+        )(x)
 
-    x = Conv2D(filters=128, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = Conv2D(filters=128, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = MaxPooling2D(pool_size=pool_size)(x)
+        x = tfa.layers.InstanceNormalization()(x)
+        x = tf.keras.layers.LeakyReLU(
+            alpha=0.3,
+        )(x)
+        x = Conv2D(
+            filters=nbr_filter,
+            kernel_size=kernel_size,
+            activation=convActivation,
+            padding="same",
+            kernel_regularizer=convRegularizer,
+            kernel_constraint=convConstrain,
+        )(x)
+        x = tfa.layers.InstanceNormalization()(x)
+        x = tf.keras.layers.LeakyReLU(
+            alpha=0.3,
+        )(x)
+        x = MaxPooling2D(pool_size=pool_size)(x)
+        x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
 
-    x = Conv2D(filters=256, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = Conv2D(filters=256, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = MaxPooling2D(pool_size=pool_size)(x)
+    # # CONV BLOCK 1
+    # nbr_filters = 64
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    # )(img_input)
 
-    x = Conv2D(filters=512, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = Conv2D(filters=512, kernel_size=kernel_size, activation="relu", padding="same")(
-        x
-    )
-    x = tfa.layers.InstanceNormalization()(x)
-    x = Activation("relu")(x)
-    x = MaxPooling2D(pool_size=pool_size)(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = MaxPooling2D(pool_size=pool_size)(x)
+    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
+
+    # # CONV BLOCK 2
+    # nbr_filters = 128
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = MaxPooling2D(pool_size=pool_size)(x)
+    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
+
+    # # CONV BLOCK 3
+    # nbr_filters = 256
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = MaxPooling2D(pool_size=pool_size)(x)
+    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
+
+    # # CONV BLOCK 4
+    # nbr_filters = 512
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Conv2D(
+    #     filters=nbr_filters,
+    #     kernel_size=kernel_size,
+    #     activation=convActivation,
+    #     padding="same",
+    #     kernel_regularizer=convRegularizer,
+    #     kernel_constraint=convConstrain,
+    # )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = MaxPooling2D(pool_size=pool_size)(x)
+    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
 
     # classifier
     x = GlobalAveragePooling2D()(x)
+
+    x = Dense(
+        units=1024,
+        activation=denseActivation,
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+    )(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    x = Dropout(denseDropoutRate)(x)
+
     if use_age:
         # @ToDo Implement tabular network
         # if use_age_thr_tabular_network:
         # else:
         age_input = Input(shape=(1,), name="age")
         enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
-
         x = tf.keras.layers.concatenate([x, enc_age])
 
-    x = Dropout(0.2)(x)
-    x = Dense(
-        units=128,
+    output = Dense(
+        units=num_classes,
+        activation="softmax",
+        name="label",
     )(x)
-    x = BatchNormalization()(x)
-    x = Activation("relu")(x)
-    output = Dense(units=num_classes, activation="softmax", name="label")(x)
 
     if use_age:
         model = tf.keras.Model(inputs=[img_input, age_input], outputs=output)
@@ -115,7 +273,7 @@ def SimpleDetectionModel_TF(
     # print model if needed
     if debug is True:
         print(model.summary())
-
+    print(model.summary())
     return model
 
 
@@ -129,13 +287,13 @@ class ResnetIdentityBlock(tf.keras.Model):
         self.use_dropout = use_dropout
 
         self.conv2a = tf.keras.layers.Conv2D(filters1, (1, 1))
-        self.bn2a = tf.keras.layers.BatchNormalization()
+        self.bn2a = tfa.layers.InstanceNormalization()
 
         self.conv2b = tf.keras.layers.Conv2D(filters2, kernel_size, padding="same")
-        self.bn2b = tf.keras.layers.BatchNormalization()
+        self.bn2b = tfa.layers.InstanceNormalization()
 
         self.conv2c = tf.keras.layers.Conv2D(filters3, (1, 1))
-        self.bn2c = tf.keras.layers.BatchNormalization()
+        self.bn2c = tfa.layers.InstanceNormalization()
 
         self.dp2 = tf.keras.layers.SpatialDropout2D(rate=0.2)
 
@@ -165,16 +323,16 @@ class ResnetConvBlock(tf.keras.Model):
         self.use_dropout = use_dropout
 
         self.conv2a = tf.keras.layers.Conv2D(filters1, (1, 1))
-        self.bn2a = tf.keras.layers.BatchNormalization()
+        self.bn2a = tfa.layers.InstanceNormalization()
 
         self.conv2b = tf.keras.layers.Conv2D(filters2, kernel_size, padding="same")
-        self.bn2b = tf.keras.layers.BatchNormalization()
+        self.bn2b = tfa.layers.InstanceNormalization()
 
         self.conv2c = tf.keras.layers.Conv2D(filters3, (1, 1))
-        self.bn2c = tf.keras.layers.BatchNormalization()
+        self.bn2c = tfa.layers.InstanceNormalization()
 
         self.conv2s = tf.keras.layers.Conv2D(filters3, (1, 1))
-        self.bn2s = tf.keras.layers.BatchNormalization()
+        self.bn2s = tfa.layers.InstanceNormalization()
 
         self.dp2 = tf.keras.layers.SpatialDropout2D(rate=0.2)
 
@@ -240,7 +398,6 @@ def ResNet9(
     input_shape: Union[list, tuple],
     use_age: bool = False,
     use_age_thr_tabular_network: bool = False,
-    use_gradCAM: bool = False,
     debug: bool = False,
 ):
     # building  model
@@ -289,7 +446,7 @@ def ResNet9(
     return model
 
 
-# ############################## Vision Transformer model
+# %% ############################## Vision Transformer model
 class ShiftedPatchTokenization(tf.keras.layers.Layer):
     def __init__(
         self,
@@ -482,8 +639,8 @@ def ViT(
             x = Dropout(dropout_rate)(x)
         return x
 
-        # # ################# PATCH EXTRACTION
-        # class Patches(tf.keras.layers.Layer):
+    # # ################# PATCH EXTRACTION
+    class Patches(tf.keras.layers.Layer):
         def __init__(self, patch_size):
             super(Patches, self).__init__()
             self.patch_size = patch_size
@@ -501,33 +658,46 @@ def ViT(
             patches = tf.reshape(patches, [batch_size, -1, patch_dims])
             return patches
 
-    # ################  PATCH ENCODING LAYER
-    # class PatchEncoder(tf.keras.layers.Layer):
-    #     def __init__(self, num_patches, projection_dim):
-    #         super(PatchEncoder, self).__init__()
-    #         self.num_patches = num_patches
-    #         self.projection = Dense(units=projection_dim)
-    #         self.position_embedding = Embedding(
-    #             input_dim=num_patches, output_dim=projection_dim
-    #         )
+        def get_config(self):
 
-    #     def call(self, patch):
-    #         positions = tf.range(start=0, limit=self.num_patches, delta=1)
-    #         encoded = self.projection(patch) + self.position_embedding(positions)
-    #         return encoded
+            config = super().get_config().copy()
+            config.update(
+                {
+                    "patch_size": self.patch_size,
+                }
+            )
+            return config
+
+    # ################  PATCH ENCODING LAYER
+    class PatchEncoder(tf.keras.layers.Layer):
+        def __init__(self, num_patches, projection_dim):
+            super(PatchEncoder, self).__init__()
+            self.num_patches = num_patches
+            self.projection_dim = projection_dim
+            self.projection = Dense(units=projection_dim)
+            self.position_embedding = Embedding(
+                input_dim=num_patches, output_dim=projection_dim
+            )
+
+        def call(self, patch):
+            positions = tf.range(start=0, limit=self.num_patches, delta=1)
+            encoded = self.projection(patch) + self.position_embedding(positions)
+            return encoded
+
+        def get_config(self):
+
+            config = super().get_config().copy()
+            config.update(
+                {
+                    "num_patches": self.num_patches,
+                    "projection_dim": self.projection_dim,
+                }
+            )
+            return config
 
     # ACTUALLY BUILD THE MODEL
     img_input = Input(shape=input_size, name="image")
-    if use_gradCAM:
-        gradCAM_input = Input(shape=input_size, name="gradCAM")
-        # stack image and gradCAM
-        concat = tf.keras.layers.concatenate([img_input, gradCAM_input], axis=3)
-
-    # Create patches.
-    if use_gradCAM:
-        patches = Patches(patch_size)(concat)
-    else:
-        patches = Patches(patch_size)(img_input)
+    patches = Patches(patch_size)(img_input)
     # Encode patches.
     encoded_patches = PatchEncoder(num_patches, projection_dim)(patches)
 
@@ -566,14 +736,9 @@ def ViT(
     # Classify outputs.
     logits = Dense(num_classes, activation="softmax", name="label")(features)
     # Create the Keras model.
-    if all([use_age, use_gradCAM]):
-        model = tf.keras.Model(
-            inputs=[img_input, gradCAM_input, age_input], outputs=logits
-        )
-    elif use_age:
+    # Create the Keras model.
+    if use_age:
         model = tf.keras.Model(inputs=[img_input, age_input], outputs=logits)
-    elif use_gradCAM:
-        model = tf.keras.Model(inputs=[img_input, gradCAM_input], outputs=logits)
     else:
         model = tf.keras.Model(inputs=img_input, outputs=logits)
 

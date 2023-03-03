@@ -37,15 +37,24 @@ def EfficientNet(
     pretrained: bool = True,
     froze_weights: bool = False,
 ):
+    """
+    Make sure not to use the functional API if not you get a
+    nested model from which is difficult to get the GradCam
+    """
 
     denseRegularizer = "L2"
     denseConstrain = None
-    denseActivation = "relu"
-    denseDropoutRate = 0.2
+    denseActivation = None
+    denseDropoutRate = 0.8
+
+    img_input = Input(shape=input_shape, name="image")
 
     # use EfficientNet from keras as feature extractor
     efficientNet = tf.keras.applications.EfficientNetB0(
-        include_top=False, weights="imagenet" if pretrained else None, pooling="avg"
+        include_top=False,
+        weights="imagenet" if pretrained else None,
+        pooling="avg",
+        input_tensor=img_input,
     )
 
     # froze model layers
@@ -53,19 +62,21 @@ def EfficientNet(
         efficientNet.trainable = False
 
     # build model
-    img_input = Input(shape=input_shape, name="image")
-    # image through feature extractor
-    x = efficientNet(img_input)
+    x = BatchNormalization()(efficientNet.output)
+    x = Dropout(denseDropoutRate)(x)
 
     # classifier
-    x = Dense(
-        units=36,
-        activation=denseActivation,
-        kernel_regularizer=denseRegularizer,
-        kernel_constraint=denseConstrain,
-    )(x)
-    x = BatchNormalization()(x)
-    x = Dropout(denseDropoutRate)(x)
+    # x = Dense(
+    #     units=128,
+    #     activation=denseActivation,
+    #     kernel_regularizer=denseRegularizer,
+    #     kernel_constraint=denseConstrain,
+    # )(x)
+    # x = BatchNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Dropout(denseDropoutRate)(x)
 
     if use_age:
         # @ToDo Implement tabular network
@@ -123,7 +134,7 @@ def SimpleDetectionModel_TF(
     img_input = Input(shape=input_shape, name="image")
 
     x = img_input
-    for nbr_filter in [128, 128, 128, 128]:
+    for nbr_filter in [64, 128, 256, 512]:
         x = Conv2D(
             filters=nbr_filter,
             kernel_size=kernel_size,
@@ -131,11 +142,10 @@ def SimpleDetectionModel_TF(
             padding="same",
             kernel_regularizer=convRegularizer,
         )(x)
-
-        # x = tfa.layers.InstanceNormalization()(x)
-        # x = tf.keras.layers.LeakyReLU(
-        #     alpha=0.3,
-        # )(x)
+        x = tfa.layers.InstanceNormalization()(x)
+        x = tf.keras.layers.LeakyReLU(
+            alpha=0.3,
+        )(x)
         x = Conv2D(
             filters=nbr_filter,
             kernel_size=kernel_size,
@@ -151,124 +161,9 @@ def SimpleDetectionModel_TF(
         x = MaxPooling2D(pool_size=pool_size)(x)
         x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
 
-    # # CONV BLOCK 1
-    # nbr_filters = 64
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    # )(img_input)
-
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = MaxPooling2D(pool_size=pool_size)(x)
-    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
-
-    # # CONV BLOCK 2
-    # nbr_filters = 128
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = MaxPooling2D(pool_size=pool_size)(x)
-    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
-
-    # # CONV BLOCK 3
-    # nbr_filters = 256
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = MaxPooling2D(pool_size=pool_size)(x)
-    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
-
-    # # CONV BLOCK 4
-    # nbr_filters = 512
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = Conv2D(
-    #     filters=nbr_filters,
-    #     kernel_size=kernel_size,
-    #     activation=convActivation,
-    #     padding="same",
-    #     kernel_regularizer=convRegularizer,
-    #     kernel_constraint=convConstrain,
-    # )(x)
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
-    # x = MaxPooling2D(pool_size=pool_size)(x)
-    # x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
-
     # classifier
     x = GlobalAveragePooling2D()(x)
+    x = BatchNormalization()(x)
 
     x = Dense(
         units=512,

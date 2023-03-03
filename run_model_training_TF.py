@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -226,10 +226,10 @@ else:
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.00001,
+        "NBR_FOLDS": 3,
+        "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 50,
+        "MAX_EPOCHS": 75,
         "USE_PRETRAINED_MODEL": True,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
         "USE_AGE": False,
@@ -237,10 +237,10 @@ else:
         "LOSS": "MCC_and_CCE_Loss",
         "RANDOM_SEED_NUMBER": 1214,
         "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 0.6,
+        "DEBUG_DATASET_FRACTION": 0.5,
         "TFR_DATA": True,
         "MODEL_TYPE": "EfficientNet",
-        "MODEL_NAME": "TEST_model_capacity_EfficientNet_preTrained",
+        "MODEL_NAME": "TEST_model_architecture",
         "OPTIMIZER": "ADAM",
     }
 
@@ -331,7 +331,7 @@ all_file_names = data_utilities.get_img_file_names(
     brain_min_rpl=1,
     brain_max_rpl=100,
     file_format="tfrecords",
-    tumor_loc=["infra", "supra"],
+    tumor_loc=["infra"],
 )
 
 unique_patien_IDs_with_labels = list(
@@ -692,6 +692,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
         )
     else:
+        print(f'{" "*6}Skipping normalization (check if on purpose!)...')
         flag_normalization = False
         norm_stats = None
 
@@ -720,6 +721,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="train",
         nbr_classes=args_dict["NBR_CLASSES"],
+        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
     )
     print(f'{" "*6}Training gen. done!')
 
@@ -749,6 +751,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="val",
         nbr_classes=args_dict["NBR_CLASSES"],
+        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
     )
     print(f'{" "*6}Validation gen. done!')
     test_gen, test_steps = data_gen(
@@ -773,6 +776,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="test",
         nbr_classes=args_dict["NBR_CLASSES"],
+        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
     )
     print(f'{" "*6}Testing gen. done!')
 
@@ -846,7 +850,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
             model = models.EfficientNet(
                 num_classes=args_dict["NBR_CLASSES"],
-                input_shape=input_shape,
+                input_shape=(input_shape[0], input_shape[1], 3),
                 use_age=args_dict["USE_AGE"],
                 use_age_thr_tabular_network=False,
                 pretrained=args_dict["USE_PRETRAINED_MODEL"],
@@ -886,7 +890,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             # )
 
     # wrap using LookAhead which helps smoothing out validation curves
-    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.7)
+    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
 
     if args_dict["LOSS"] == "MCC":
         print(f'{" "*6}Using MCC loss.')

@@ -89,9 +89,10 @@ class gradCAM:
         self.use_image_prediction = use_image_prediction
         self.is_ViT = ViT
         self.is_3D = is_3D
+        self.is_efficientNet = is_efficientNet
 
         # if the layerName is not provided, find the last conv layer in the model
-        if self.layerName is None:
+        if all([self.layerName is None, not is_efficientNet]):
             self.layerName = self.find_target_layer()
         else:
             if self.debug is True:
@@ -134,10 +135,26 @@ class gradCAM:
         """
         # this is a gradient model that we will use to obtain the gradients from
         # with respect to an image to construct the heatmaps
+        # if self.is_efficientNet:
+        #     # this is convoluted since the pretrained model is nested. Ugly but works
+        #     pre_model = tf.keras.models.Model(
+        #         self.model.input, self.model.layers[0].output
+        #     )
+        #     eff_net = tf.keras.models.Model(
+        #         self.model.layers[1].input,
+        #         self.model.layers[1].get_layer(self.layerName).output,
+        #     )
+        #     gradModel = tf.keras.models.Model(
+        #         self.model.input, [eff_net.call(pre_model.output), self.model.output]
+        #     )
+        # else:
         gradModel = tf.keras.Model(
-            inputs=[self.model.inputs],
-            outputs=[self.model.get_layer(self.layerName).output, self.model.output],
-        )
+                inputs=[self.model.inputs],
+                outputs=[
+                    self.model.get_layer(self.layerName).output,
+                    self.model.output,
+                ],
+            )
 
         # replacing softmax with linear activation
         gradModel.layers[-1].activation = tf.keras.activations.linear
@@ -153,6 +170,7 @@ class gradCAM:
             associated with the specific class index.
             """
             inputs = tf.cast(image, tf.float32)
+            tape.watch(inputs)
             (convOutputs, predictions) = gradModel(inputs)
             # check if the prediction is a list (VAE)
             if type(predictions) is list:
@@ -162,6 +180,7 @@ class gradCAM:
             loss = predictions[:, self.classIdx]
 
         grads = tape.gradient(loss, convOutputs)
+        
         # sometimes grads becomes NoneType
         if grads is None:
             grads = tf.zeros_like(convOutputs)
@@ -309,10 +328,10 @@ else:
     # # # # # # # # # # # # # # DEBUG
     print("Running in debug mode.")
     args_dict = {
-        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DEBUG_USING_JUPYTER_NOTEBOOK/ResNet9_fold_0_SGD_lr_0.001",
+        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_model_architecture_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False",
         "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
         "ANNOTATION_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
-        "NBR_IMG_TO_PROCESS": 50000,
+        "NBR_IMG_TO_PROCESS": 10,
         "GPU": "0",
     }
 
@@ -328,6 +347,7 @@ import warnings
 tf.get_logger().setLevel(logging.ERROR)
 from tensorflow.keras.utils import to_categorical
 import tensorflow.keras.layers as layers
+import keras
 
 devices = tf.config.list_physical_devices("GPU")
 
@@ -377,19 +397,38 @@ with open(
 ) as file:
     config = json.load(file)
     img_files = [
-        os.path.join(args_dict["IMG_DATASET_FOLDER"], f'{Path(f).stem}.png') for f in config["test"]
+        os.path.join(args_dict["IMG_DATASET_FOLDER"], f"{Path(f).stem}.png")
+        for f in config["test"]
     ]
+    # remove infra supra from the file name (not in the .png images)
+    aus_img_files = []
+    img_files = [
+        os.path.join(
+            os.path.dirname(f),
+            "_".join(
+                [
+                    os.path.basename(f).split("_")[i]
+                    for i in range(len(os.path.basename(f).split("_")))
+                    if i != 1
+                ]
+            ),
+        )
+        for f in img_files
+    ]
+
     # remove images that are not available
-    img_files = [f for f in img_files if os.path.isfile(f)]
+    # img_files = [f for f in img_files if os.path.isfile(f)]
     # only take args_dict['NBR_IMG_TO_PROCESS'] random images
-    # random.shuffle(img_files)
-    # img_files = img_files[0 : args_dict["NBR_IMG_TO_PROCESS"]]
+    random.shuffle(img_files)
+    # just for debug take images that have tumor
+    img_files = [f for f in img_files if "label_1" in os.path.basename(f)]
+    img_files = img_files[0 : args_dict["NBR_IMG_TO_PROCESS"]]
 
 # ###################
 # use all the images in the given dataset path
 # img_files = glob.glob(os.path.join(args_dict["IMG_DATASET_FOLDER"], "*.png"))
 # remove annotation files
-img_files = [f for f in img_files if "annotation" not in os.path.basename(f)]
+# img_files = [f for f in img_files if "annotation" not in os.path.basename(f)]
 # ###################
 
 target_size = (224, 224)
@@ -398,6 +437,7 @@ img_gen = data_utilities.img_data_generator(
     target_size=target_size,
     batch_size=1,
     dataset_type="testing",
+    normalize_img=False,
 )
 
 # build dictionary where the images to work on are located
@@ -440,6 +480,7 @@ print(f"Pool of test data to work on: {len(img_gen)}")
 # define parameters
 dataset_type = "test"
 model_version = "last"
+is_efficientNet = True
 
 # get models to run prediction on (along with the index of the images to use for
 # each of them based on the dataset).
@@ -460,7 +501,7 @@ for f in args_dict["CV_REPETITION_FOLDERS"]:
     aus_subjects = [int(s.split(".")[0].split("_")[-1]) for s in aus_subjects]
     # save information
     aus_dict = {
-        "model_path": os.path.join(f, "last_model", ""),
+        "model_path": os.path.join(f, "last_model", "last_model"),
         "indx_subjects": aus_subjects,
     }
     if model_version == "best":
@@ -522,11 +563,8 @@ for m_idx, model_dict in enumerate(MODELS):
     """
     name_layers = []
     for layer in model.layers:
-        if "conv" in layer.name:
-            if "conv2d" in layer.name:
-                # here no conv blocks
+        if isinstance(layer, keras.layers.convolutional.Conv2D):
                 name_layers.append(layer.name)
-    # trim layer_names to only the last two
     name_layers = name_layers[-1::]
 
     # loop through the test images of this model
@@ -552,7 +590,9 @@ for m_idx, model_dict in enumerate(MODELS):
                         end="",
                     )
                     # define gradCAM object for this layer and channel
-                    cam = gradCAM(model, c, layerName=nl)
+                    cam = gradCAM(
+                        model, c, layerName=nl
+                    )
                     # compute gradCAM
                     aus_raw, _ = cam.compute_heatmap(image)
                     # save infom for this channel

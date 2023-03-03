@@ -18,6 +18,7 @@ Build datagenerator object which can be used to get data from TFR or image files
 
 def img_data_generator(
     sample_files,
+    normalize_img: bool = True,
     use_GradCAM_loc: bool = False,
     path_to_GradCAMs: str = None,
     use_age: bool = False,
@@ -94,9 +95,20 @@ def img_data_generator(
             horizontal_flip=True,
             vertical_flip=True,
         )
-    elif any([dataset_type == "validation", dataset_type == "testing"]):
+    elif all(
+        [any([dataset_type == "validation", dataset_type == "testing"]), normalize_img]
+    ):
         preprocessing = keras.preprocessing.image.ImageDataGenerator(
             rescale=1.0 / 255,
+        )
+    elif all(
+        [
+            any([dataset_type == "validation", dataset_type == "testing"]),
+            not normalize_img,
+        ]
+    ):
+        preprocessing = keras.preprocessing.image.ImageDataGenerator(
+            rescale=1.0,
         )
 
     else:

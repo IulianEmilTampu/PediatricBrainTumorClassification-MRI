@@ -57,52 +57,37 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
         if epoch % self.print_every_n_epoch == 0:
             print(" Saving graphs...")
             x_ = range(epoch + 1)
-            plt.figure(figsize=(8, 8))
-            plt.subplot(2, 1, 1)
-            plt.plot(
-                x_,
-                self.history["accuracy"],
-                label="Training Accuracy",
-            )
-            plt.plot(
-                x_,
-                self.history["val_accuracy"],
-                label="Validation Accuracy",
-            )
-            plt.legend(loc="lower right")
-            plt.title("Training and Validation Accuracy")
-            plt.subplot(2, 1, 2)
-            plt.plot(
-                x_,
-                self.history["loss"],
-                label="Training Loss",
-            )
-            plt.plot(
-                x_,
-                self.history["val_loss"],
-                label="Validation Loss",
-            )
-            plt.legend(loc="upper right")
-            plt.title("Training and Validation Loss")
 
-            # plot mcc if available
+            fig, ax = plt.subplots(
+                figsize=(20, 15),
+                nrows=3 if self.history["MatthewsCorrelationCoefficient"] else 2,
+                ncols=1,
+            )
+            # print training loss
+            ax[0].plot(self.history["loss"], label="Training loss")
+            ax[0].plot(self.history["val_loss"], label="Validation loss")
+            ax[0].set_title(f"Training and Validation loss curves")
+            ax[0].legend()
+            # print training accuracy
+            ax[1].plot(self.history["accuracy"], label="Training accuracy")
+            ax[1].plot(self.history["val_accuracy"], label="Validation accuracy")
+            ax[1].set_title(f"Training and Validation accuracy curves")
+            ax[1].legend()
+
+            # print training MCC
             if self.history["MatthewsCorrelationCoefficient"]:
-                plt.subplot(3, 1, 3)
-                plt.plot(
-                    x_,
-                    self.history["MatthewsCorrelationCoefficient"],
-                    label="Training MCC",
+                ax[2].plot(
+                    self.history["MatthewsCorrelationCoefficient"], label="Training MCC"
                 )
-                plt.plot(
-                    x_,
+                ax[2].plot(
                     self.history["val_MatthewsCorrelationCoefficient"],
                     label="Validation MCC",
                 )
-                plt.legend(loc="lower right")
-                plt.title("Training and Validation MCC")
+                ax[2].set_title("Training and Validation MCC curves")
+                ax[2].legend()
 
-            plt.savefig(os.path.join(self.save_path, "acc_loss.png"))
-            plt.close()
+            plt.savefig(os.path.join(self.save_path, "training_curves.png"))
+            plt.close(fig)
 
             if self.history["learning_rate"][-1]:
                 # save also learning rate

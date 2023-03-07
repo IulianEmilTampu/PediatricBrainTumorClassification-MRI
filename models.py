@@ -50,7 +50,7 @@ def EfficientNet(
     img_input = Input(shape=input_shape, name="image")
 
     # use EfficientNet from keras as feature extractor
-    efficientNet = tf.keras.applications.EfficientNetB0(
+    efficientNet = tf.keras.applications.efficientnet_v2.EfficientNetV2B0(
         include_top=False,
         weights="imagenet" if pretrained else None,
         pooling="avg",
@@ -63,6 +63,88 @@ def EfficientNet(
 
     # build model
     x = BatchNormalization()(efficientNet.output)
+    x = Dropout(denseDropoutRate)(x)
+
+    # classifier
+    # x = Dense(
+    #     units=128,
+    #     activation=denseActivation,
+    #     kernel_regularizer=denseRegularizer,
+    #     kernel_constraint=denseConstrain,
+    # )(x)
+    # x = BatchNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Dropout(denseDropoutRate)(x)
+
+    if use_age:
+        # @ToDo Implement tabular network
+        # if use_age_thr_tabular_network:
+        # else:
+        age_input = Input(shape=(1,), name="age")
+        enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
+        x = tf.keras.layers.concatenate([x, enc_age])
+
+    output = Dense(
+        units=num_classes,
+        activation="softmax",
+        name="label",
+    )(x)
+
+    if use_age:
+        model = tf.keras.Model(
+            inputs=[img_input, age_input], outputs=output, name="EfficientNet"
+        )
+    else:
+        model = tf.keras.Model(inputs=img_input, outputs=output, name="EfficientNet")
+
+    # print model if needed
+    if debug is True:
+        print(model.summary())
+    print(model.summary())
+    return model
+
+
+#%% ResNet18
+
+
+def ResNet50(
+    num_classes: int,
+    input_shape: Union[list, tuple],
+    use_age: bool = False,
+    use_age_thr_tabular_network: bool = False,
+    debug: bool = False,
+    pretrained: bool = True,
+    froze_weights: bool = False,
+):
+    """
+    Make sure not to use the functional API if not you get a
+    nested model from which is difficult to get the GradCam
+    """
+
+    denseRegularizer = "L2"
+    denseConstrain = None
+    denseActivation = None
+    denseDropoutRate = 0.8
+
+    img_input = Input(shape=input_shape, name="image")
+    x = tf.keras.applications.mobilenet.preprocess_input(img_input)
+
+    # use EfficientNet from keras as feature extractor
+    resnet50 = tf.keras.applications.resnet.ResNet152(
+        include_top=False,
+        weights="imagenet" if pretrained else None,
+        pooling="avg",
+        input_tensor=x,
+    )
+
+    # froze model layers
+    if froze_weights:
+        resnet50.trainable = False
+
+    # build model
+    x = BatchNormalization()(resnet50.output)
     x = Dropout(denseDropoutRate)(x)
 
     # classifier

@@ -306,14 +306,8 @@ def _parse_function_withouth_TF_op(
     proto,
     input_size,
     return_img: bool = True,
-    normalize_img: bool = True,
-    img_norm_values: tuple = None,
     return_gradCAM: bool = False,
-    normalize_gradCAM: bool = True,
-    gradCAM_norm_values: tuple = None,
     return_age: bool = False,
-    normalize_age: bool = False,
-    age_norm_values: tuple = None,
     nbr_classes: int = 3,
     to_categorical: bool = True,
     output_as_RGB: bool = False,
@@ -428,13 +422,22 @@ Tha augmentation works as the following
 """
 
 
-def image_normalization(sample, label):
+def image_normalization(sample, label, image_norm_values: tuple):
+    # @TODO: image and gradcam normalization based on given mean and std
+    # aug_img = sample["image"]
+    # aug_img = tf.math.divide(aug_img, 255)
+    # aug_img = tf.math.multiply(aug_img, 2)
+    # aug_img = tf.math.subtract(aug_img, 1)
+    # sample["image"] = aug_img
+    return sample, label
+
+
+def image_scaling(sample, label):
     aug_img = sample["image"]
     aug_img = tf.math.divide(aug_img, 255)
     aug_img = tf.math.multiply(aug_img, 2)
     aug_img = tf.math.subtract(aug_img, 1)
     sample["image"] = aug_img
-
     return sample, label
 
 
@@ -510,6 +513,7 @@ def tfrs_data_generator(
     data_augmentation=True,
     return_img: bool = True,
     normalize_img: bool = True,
+    scale_image: bool = True,
     img_norm_values: tuple = None,
     normalize_gradCAM: bool = True,
     gradCAM_norm_values: tuple = None,
@@ -574,14 +578,8 @@ def tfrs_data_generator(
                     x,
                     input_size,
                     return_img=return_img,
-                    normalize_img=normalize_img,
-                    img_norm_values=img_norm_values,
                     return_gradCAM=return_gradCAM,
-                    normalize_gradCAM=normalize_gradCAM,
-                    gradCAM_norm_values=gradCAM_norm_values,
                     return_age=return_age,
-                    normalize_age=normalize_age,
-                    age_norm_values=age_norm_values,
                     nbr_classes=nbr_classes,
                     to_categorical=to_categorical,
                     output_as_RGB=output_as_RGB,
@@ -597,8 +595,18 @@ def tfrs_data_generator(
         dataset = dataset.repeat()
 
     """ DATA NORMALIZATION """
+    """
+    Note that in the context of teh CBTN dataset, each transveral slice originates
+    from normalized volumes (using min-max normalization with 99.8 percentile values).
+    Thus, normalizing each image again using statistics from the whole dataset is not 
+    desirable. 
+    What is needed, on the other hand, is to scale the values in [-1,1] range. This 
+    depends on which model is used (e.g. EfficientNet does not need rescaling).
+    """
     if all([return_img, normalize_img]):
         dataset = dataset.map(image_normalization)
+    elif all([return_img, scale_image]):
+        dataset = dataset.map(image_scaling)
     if all([normalize_age, age_norm_values]):
         dataset = dataset.map(
             lambda x, y: age_normalization(x, y, age_norm_values=age_norm_values)
@@ -856,14 +864,14 @@ def get_img_file_names(
             ]
         ):
             labels_5_classes = {
-                "ASTROCYTOMAinfra": 0,
-                "ASTROCYTOMAsupra": 1,
-                "EPENDYMOMAinfra": 2,
-                "EPENDYMOMAsupra": 3,
-                "MEDULLOBLASTOMAinfra": 4,
+                "ASTROCYTOMA_infra": 0,
+                "ASTROCYTOMA_supra": 1,
+                "EPENDYMOMA_infra": 2,
+                "EPENDYMOMA_supra": 3,
+                "MEDULLOBLASTOMA_infra": 4,
             }
             labels = [
-                labels_5_classes[os.path.basename(f[0]).split("_")[0]]
+                labels_5_classes["_".join(os.path.basename(f[0]).split("_")[0:2])]
                 for f in all_file_names
             ]
 

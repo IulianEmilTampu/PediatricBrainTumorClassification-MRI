@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = False
+su_debug_flag = True
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -226,21 +226,21 @@ else:
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 3,
+        "NBR_FOLDS": 1,
         "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
         "MAX_EPOCHS": 75,
-        "USE_PRETRAINED_MODEL": True,
+        "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
         "USE_AGE": False,
         "USE_GRADCAM": False,
         "LOSS": "MCC_and_CCE_Loss",
-        "RANDOM_SEED_NUMBER": 1214,
+        "RANDOM_SEED_NUMBER": 20091229,
         "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 0.5,
+        "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
-        "MODEL_TYPE": "EfficientNet",
-        "MODEL_NAME": "TEST_model_architecture",
+        "MODEL_TYPE": "SDM4",
+        "MODEL_NAME": "TEST_TB_reproducibility",
         "OPTIMIZER": "ADAM",
     }
 
@@ -326,12 +326,12 @@ all_file_names = data_utilities.get_img_file_names(
     return_labels=True,
     task="detection" if args_dict["NBR_CLASSES"] == 2 else "classification",
     nbr_classes=args_dict["NBR_CLASSES"],
-    tumor_min_rpl=0,
-    tumor_max_rpl=100,
+    tumor_min_rpl=20,
+    tumor_max_rpl=80,
     brain_min_rpl=1,
     brain_max_rpl=100,
     file_format="tfrecords",
-    tumor_loc=["infra"],
+    tumor_loc=["infra", "supra"],
 )
 
 unique_patien_IDs_with_labels = list(
@@ -659,42 +659,52 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     tr_files = per_fold_training_files[cv_f]
     random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(tr_files)
 
-    if not all(
-        [args_dict["USE_PRETRAINED_MODEL"], args_dict["MODEL_TYPE"] == "EfficientNet"]
-    ):
-        flag_normalization = True
-        train_gen, train_steps = data_gen(
-            file_paths=tr_files[
-                0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
-            ],
-            input_size=target_size,
-            batch_size=args_dict["BATCH_SIZE"],
-            buffer_size=1000,
-            data_augmentation=False,
-            normalize_img=False,
-            img_norm_values=None,
-            return_gradCAM=args_dict["USE_GRADCAM"],
-            normalize_gradCAM=False,
-            gradCAM_norm_values=None,
-            return_age=args_dict["USE_AGE"],
-            normalize_age=False,
-            age_norm_values=None,
-            dataset_type="test",
-            nbr_classes=args_dict["NBR_CLASSES"],
-        )
+    train_gen, train_steps = data_gen(
+        file_paths=tr_files[
+            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
+        ],
+        input_size=target_size,
+        batch_size=args_dict["BATCH_SIZE"],
+        buffer_size=1000,
+        data_augmentation=False,
+        normalize_img=False,
+        img_norm_values=None,
+        return_gradCAM=args_dict["USE_GRADCAM"],
+        normalize_gradCAM=False,
+        gradCAM_norm_values=None,
+        return_age=args_dict["USE_AGE"],
+        normalize_age=False,
+        age_norm_values=None,
+        dataset_type="test",
+        nbr_classes=args_dict["NBR_CLASSES"],
+    )
 
-        # get normalization stats
-        print(f'{" "*6}Getting normalization stats from training generator...')
-        norm_stats = data_utilities.get_normalization_values(
-            train_gen,
-            train_steps,
-            return_age_norm_values=args_dict["USE_AGE"],
-            return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
-        )
+    # get normalization stats
+    print(f'{" "*6}Getting normalization stats from training generator...')
+    norm_stats = data_utilities.get_normalization_values(
+        train_gen,
+        train_steps,
+        return_age_norm_values=args_dict["USE_AGE"],
+        return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
+    )
+
+    # set flags
+    if all(
+        [
+            True,
+            # args_dict["USE_PRETRAINED_MODEL"],
+            any(
+                [
+                    args_dict["MODEL_TYPE"] == "EfficientNet",
+                    args_dict["MODEL_TYPE"] == "ResNet50",
+                ]
+            ),
+        ]
+    ):
+        img_norm_flag = False
+        print(f'{" "*6}Skipping image normalization (check if on purpose!)...')
     else:
-        print(f'{" "*6}Skipping normalization (check if on purpose!)...')
-        flag_normalization = False
-        norm_stats = None
+        img_norm_flag = True
 
     # build actuall training datagen with normalized values
     train_gen, train_steps = data_gen(
@@ -705,7 +715,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
         data_augmentation=False,
-        normalize_img=True if flag_normalization else False,
+        normalize_img=True if img_norm_flag else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -721,7 +731,14 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="train",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
+        output_as_RGB=True
+        if any(
+            [
+                args_dict["MODEL_TYPE"] == "EfficientNet",
+                args_dict["MODEL_TYPE"] == "ResNet50",
+            ]
+        )
+        else False,
     )
     print(f'{" "*6}Training gen. done!')
 
@@ -735,7 +752,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
         data_augmentation=False,
-        normalize_img=True if flag_normalization else False,
+        normalize_img=True if img_norm_flag else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -751,7 +768,14 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="val",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
+        output_as_RGB=True
+        if any(
+            [
+                args_dict["MODEL_TYPE"] == "EfficientNet",
+                args_dict["MODEL_TYPE"] == "ResNet50",
+            ]
+        )
+        else False,
     )
     print(f'{" "*6}Validation gen. done!')
     test_gen, test_steps = data_gen(
@@ -760,7 +784,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=10,
         data_augmentation=False,
-        normalize_img=True if flag_normalization else False,
+        normalize_img=True if img_norm_flag else False,
         img_norm_values=norm_stats[0]
         if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
         else norm_stats,
@@ -776,7 +800,14 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         else None,
         dataset_type="test",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True if args_dict["MODEL_TYPE"] == "EfficientNet" else False,
+        output_as_RGB=True
+        if any(
+            [
+                args_dict["MODEL_TYPE"] == "EfficientNet",
+                args_dict["MODEL_TYPE"] == "ResNet50",
+            ]
+        )
+        else False,
     )
     print(f'{" "*6}Testing gen. done!')
 
@@ -854,7 +885,17 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                 use_age=args_dict["USE_AGE"],
                 use_age_thr_tabular_network=False,
                 pretrained=args_dict["USE_PRETRAINED_MODEL"],
-                froze_weights=True,
+                froze_weights=args_dict["USE_PRETRAINED_MODEL"],
+            )
+        elif args_dict["MODEL_TYPE"] == "ResNet50":
+            print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+            model = models.ResNet50(
+                num_classes=args_dict["NBR_CLASSES"],
+                input_shape=(input_shape[0], input_shape[1], 3),
+                use_age=args_dict["USE_AGE"],
+                use_age_thr_tabular_network=False,
+                pretrained=args_dict["USE_PRETRAINED_MODEL"],
+                froze_weights=args_dict["USE_PRETRAINED_MODEL"],
             )
         else:
             raise ValueError(
@@ -1204,7 +1245,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     ax[1].plot(history.history["accuracy"], label="training accuracy")
     ax[1].plot(history.history["val_accuracy"], label="validation accuracy")
     ax[1].set_title(
-        f'Test MCC -> (last)  {summary_test[str(cv_f+1)]["last"]["overall_accuracy"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["overall_accuracy"]:0.3f}'
+        f'Test accuracy -> (last)  {summary_test[str(cv_f+1)]["last"]["overall_accuracy"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["overall_accuracy"]:0.3f}'
     )
     ax[1].legend()
 
@@ -1218,7 +1259,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             label="validation MCC",
         )
         ax[2].set_title(
-            f'Test accuracy -> (last)  {summary_test[str(cv_f+1)]["last"]["matthews_correlation_coefficient"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["matthews_correlation_coefficient"]:0.3f}'
+            f'Test MCC -> (last)  {summary_test[str(cv_f+1)]["last"]["matthews_correlation_coefficient"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["matthews_correlation_coefficient"]:0.3f}'
         )
         ax[2].legend()
 

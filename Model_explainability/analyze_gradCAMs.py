@@ -609,7 +609,7 @@ for idx, f in enumerate(args_dict["gradCAM_FILES"]):
 
     # get p-value for each region in the image
     interest_class = 1
-    layers_of_interest = range(10)
+    layers_of_interest = range(81)
 
     for layer_of_interest in layers_of_interest:
         save_path = os.path.join(

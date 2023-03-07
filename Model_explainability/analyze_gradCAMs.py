@@ -363,7 +363,6 @@ def plot_gradCAM(
     else:
         to_plot = np.fliplr(np.rot90(to_plot, k=3))
 
-
     aus_ax = ax[1, 3]
     im = aus_ax.imshow(
         to_plot,
@@ -569,7 +568,7 @@ else:
     # # # # # # # # # # # # # # DEBUG
     print("Running in debug mode.")
     args_dict = {
-        "GRADCAM_FILES_PATH": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DEBUG_USING_JUPYTER_NOTEBOOK/SDM4_fold_0_SGD_lr_0.001/Explainability_analysis/GradCAMs",
+        "GRADCAM_FILES_PATH": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Detection_infra_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False/Explainability_analysis/GradCAMs",
     }
 # specify where to save the results
 args_dict["SAVE_PATH"] = os.path.join(args_dict["GRADCAM_FILES_PATH"], "Visualization")
@@ -610,24 +609,23 @@ for idx, f in enumerate(args_dict["gradCAM_FILES"]):
 
     # get p-value for each region in the image
     interest_class = 1
-    layer_of_interest = -1
-    # normalize raw GradCAM
-    gradCAM_dict
+    layers_of_interest = range(10)
 
-    save_path = os.path.join(
-        args_dict["SAVE_PATH"],
-        f"result_analysis_class_of_interest_{interest_class}_layer_{layer_of_interest}_{Path(f).stem}",
-    )
-    plot_gradCAM(
-        gradCAM_dict,
-        class_of_interest=interest_class,
-        layer_of_interest=layer_of_interest,
-        attribution_thr=0.6,
-        save_path=save_path,
-        scale=True,
-        draw=False,
-        plot_annotation_countour=True,
-        visual_settings_dict=visual_settings_dict,
-    )
+    for layer_of_interest in layers_of_interest:
+        save_path = os.path.join(
+            args_dict["SAVE_PATH"],
+            f"result_analysis_class_of_interest_{interest_class}_layer_{layer_of_interest}_{Path(f).stem}",
+        )
+        plot_gradCAM(
+            gradCAM_dict,
+            class_of_interest=interest_class,
+            layer_of_interest=layer_of_interest,
+            attribution_thr=0.6,
+            save_path=save_path,
+            scale=True,
+            draw=False,
+            plot_annotation_countour=True,
+            visual_settings_dict=visual_settings_dict,
+        )
 
 # %%

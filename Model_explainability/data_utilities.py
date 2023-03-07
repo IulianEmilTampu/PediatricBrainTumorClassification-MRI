@@ -18,6 +18,7 @@ Build datagenerator object which can be used to get data from TFR or image files
 
 def img_data_generator(
     sample_files,
+    normalize_img: bool = True,
     use_GradCAM_loc: bool = False,
     path_to_GradCAMs: str = None,
     use_age: bool = False,
@@ -94,9 +95,20 @@ def img_data_generator(
             horizontal_flip=True,
             vertical_flip=True,
         )
-    elif any([dataset_type == "validation", dataset_type == "testing"]):
+    elif all(
+        [any([dataset_type == "validation", dataset_type == "testing"]), normalize_img]
+    ):
         preprocessing = keras.preprocessing.image.ImageDataGenerator(
             rescale=1.0 / 255,
+        )
+    elif all(
+        [
+            any([dataset_type == "validation", dataset_type == "testing"]),
+            not normalize_img,
+        ]
+    ):
+        preprocessing = keras.preprocessing.image.ImageDataGenerator(
+            rescale=1.0,
         )
 
     else:
@@ -119,31 +131,6 @@ def img_data_generator(
         color_mode="grayscale",
     )
 
-    #     # build age generator
-    #     if use_age:
-    #         age_data_generator = tf.data.Dataset.from_tensor_slices(age)
-    #         age_data_generator = age_data_generator.batch(batch_size).shuffle(
-    #     buffer_size, seed=None, reshuffle_each_iteration=None, name=None
-    # )
-
-    #     # build generator for GradCAM
-    #     if use_GradCAM_loc:
-    #         gradCAM_data_generator = preprocessing.flow_from_dataframe(
-    #         dataframe=dataset_dataframe,
-    #         directory=None,
-    #         x_col="path_to_GradCAM_files",
-    #         y_col="label",
-    #         subset=None,
-    #         batch_size=batch_size,
-    #         seed=rnd_seed if rnd_seed else None,
-    #         shuffle=True if dataset_type == "training" else False,
-    #         class_mode="categorical",
-    #         target_size=target_size,
-    #         color_mode="grayscale",
-    #         seed = rnd_seed,
-    #     )
-
-    # @ToDo compute normalization parameters and apply to the generator.
     return sample_data_generator
 
 
@@ -184,6 +171,8 @@ def _parse_function(
     normalize_age: bool = False,
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
+    to_categorical: bool = True,
+    output_as_RGB: bool = False,
 ):
     """
     This function parses a single TF examples.
@@ -264,24 +253,162 @@ def _parse_function(
 
     # take out the labels
     if any([nbr_classes == 3, nbr_classes == 5]):
-        label = parsed_features[f"label_{nbr_classes}_classes"]
-        label = label - 1
+        label = (
+            tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
+        )
     else:
-        label = parsed_features[f"slice_with_tumor"]
+        label = tf.cast(parsed_features[f"slice_with_tumor"], dtype=tf.int32)
+
     # convert to categorical
-    label = tf.cast(tf.one_hot(tf.cast(label, tf.int32), nbr_classes), dtype=tf.float32)
+    if to_categorical:
+        label = tf.cast(tf.one_hot(label, nbr_classes), dtype=tf.float32)
+        # label = tf.keras.utils.to_categorical(label, nbr_classes, dtype=tf.float32)
 
     if all([return_img, return_gradCAM, return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        # fix number of output channels (usually 3 for pre-trained models on imageNet)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image, "age": age}, {"label": label}
+
     elif all([return_img, return_gradCAM, not return_age]):
-        image = tf.stack([image, gradCAM], axis=-1)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image}, {"label": label}
     elif all([return_img, not return_gradCAM, return_age]):
-        return {"image": tf.expand_dims(image, axis=-1), "age": age}, {"label": label}
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
+        return {"image": image, "age": age}, {"label": label}
     elif all([return_img, not return_gradCAM, not return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
         return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
     elif all([not return_img, return_gradCAM, return_age]):
+        if output_as_RGB:
+            gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
+        return ({"image": gradCAM, "age": age}, {"label": label})
+    elif all([not return_img, not return_gradCAM, return_age]):
+        return {"age": age}, {"label": label}
+    else:
+        raise ValueError(
+            f"Generator set to output NOTHING! Check that this is the intended behviour. If so, continue implementation"
+        )
+
+
+def _parse_function_withouth_TF_op(
+    proto,
+    input_size,
+    return_img: bool = True,
+    normalize_img: bool = True,
+    img_norm_values: tuple = None,
+    return_gradCAM: bool = False,
+    normalize_gradCAM: bool = True,
+    gradCAM_norm_values: tuple = None,
+    return_age: bool = False,
+    normalize_age: bool = False,
+    age_norm_values: tuple = None,
+    nbr_classes: int = 3,
+    to_categorical: bool = True,
+    output_as_RGB: bool = False,
+):
+    """
+    This function parses a single TF examples.
+    In this implementation, the sample is only parsed and brought back to its
+    original shape. Note that other manipulations can be applied if needed
+    (not data augmentation, for example addigng extra channels)
+
+    INPUT
+    proto : tf.data.TFRecordDataset
+        This (internaly) has the link to the path where an TF example is stored.
+    input_size : tuple or list
+        Size of the image to be parce. Note that the size of the image is also stored
+        in the tf example, but given that the code is built into a graph, the size
+        of the image can not be left unspecified (the parced input dimentions are only
+        tensors which value is defined at runtime - the resize function need values
+        available during graph construction).
+
+    OUTPUT
+    image : tf eager tensor (has the numpy() attribute)
+        Tensor of the image encoded in the TFRecord example
+    label : tf eager tensor (has the numpy() attribute)
+        Tensor of the label encoded in the TFRecord example
+    """
+
+    key_features = {
+        "image": tf.io.FixedLenFeature([], tf.string),
+        "gradCAM": tf.io.FixedLenFeature([], tf.string),
+        "age": tf.io.FixedLenFeature([], tf.int64),
+        "file_name": tf.io.FixedLenFeature([], tf.string),
+        "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
+        "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
+        "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
+    }
+
+    # take out specified features (key_features) from the example
+    parsed_features = tf.io.parse_single_example(proto, key_features)
+    if return_img:
+        # decode image from the example (convert from string of bytes and reshape)
+        image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
+        image = tf.reshape(image, shape=input_size)
+
+    if return_gradCAM:
+        # decode image from the example (convert from string of bytes and reshape)
+        gradCAM = tf.io.decode_raw(parsed_features["gradCAM"], out_type=tf.float32)
+        gradCAM = tf.reshape(gradCAM, shape=input_size)
+        gradCAM = tf.cast(gradCAM, dtype=tf.float32)
+
+    if return_age:
+        # parsing age
+        age = parsed_features["age"]
+        age = tf.cast(age, dtype=tf.float64)
+
+    # take out the labels
+    if any([nbr_classes == 3, nbr_classes == 5]):
+        label = (
+            tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
+        )
+    else:
+        label = tf.cast(parsed_features[f"slice_with_tumor"], dtype=tf.int32)
+
+    if to_categorical:
+        label = tf.cast(tf.one_hot(label, nbr_classes), dtype=tf.float32)
+
+    if all([return_img, return_gradCAM, return_age]):
+        # fix number of output channels (usually 3 for pre-trained models on imageNet)
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
+        return {"image": image, "age": age}, {"label": label}
+
+    elif all([return_img, return_gradCAM, not return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, gradCAM], axis=-1)
+        else:
+            image = tf.stack([image, gradCAM], axis=-1)
+        return {"image": image}, {"label": label}
+    elif all([return_img, not return_gradCAM, return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
+        return {"image": image, "age": age}, {"label": label}
+    elif all([return_img, not return_gradCAM, not return_age]):
+        if output_as_RGB:
+            image = tf.stack([image, image, image], axis=-1)
+        else:
+            image = tf.expand_dims(image, axis=-1)
+        return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
+    elif all([not return_img, return_gradCAM, return_age]):
+        if output_as_RGB:
+            gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
         return ({"image": gradCAM, "age": age}, {"label": label})
     elif all([not return_img, not return_gradCAM, return_age]):
         return {"age": age}, {"label": label}
@@ -301,7 +428,24 @@ Tha augmentation works as the following
 """
 
 
-def flip(sample, label, random=0.5):
+def image_normalization(sample, label):
+    aug_img = sample["image"]
+    aug_img = tf.math.divide(aug_img, 255)
+    aug_img = tf.math.multiply(aug_img, 2)
+    aug_img = tf.math.subtract(aug_img, 1)
+    sample["image"] = aug_img
+
+    return sample, label
+
+
+def age_normalization(sample, label, age_norm_values: tuple):
+    age = sample["age"]
+    age = tf.math.divide(tf.math.subtract(age, age_norm_values[0]), age_norm_values[1])
+    sample["age"] = age
+    return sample, label
+
+
+def flip(sample, label, random=0.1):
     # perform random flip with probability random
     if tf.random.uniform(()) <= random:
         aug_img = tf.expand_dims(sample["image"], 0)
@@ -317,7 +461,7 @@ def flip(sample, label, random=0.5):
         return sample, label
 
 
-def brightness(sample, label, max_delta=0.5, random=0.5):
+def brightness(sample, label, max_delta=0.5, random=0.1):
     # perform random brightness with probability random
     if tf.random.uniform(()) <= random:
         # aug_img = tf.expand_dims(sample["image"], 0)
@@ -332,7 +476,7 @@ def brightness(sample, label, max_delta=0.5, random=0.5):
         return sample, label
 
 
-def rotation(sample, label, random=0.5):
+def rotation(sample, label, random=0.1):
     # perform random rotation with probability random
     if tf.random.uniform(()) <= random:
         aug_img = tf.expand_dims(sample["image"], 0)
@@ -374,6 +518,8 @@ def tfrs_data_generator(
     normalize_age: bool = False,
     age_norm_values: tuple = None,
     nbr_classes: int = 3,
+    to_categorical: bool = True,
+    output_as_RGB: bool = False,
 ):
     """
     Function that given a list of TFRecord files returns a data generator on them.
@@ -424,7 +570,7 @@ def tfrs_data_generator(
     dataset = dataset.map(
         tf.autograph.experimental.do_not_convert(
             lambda x: (
-                _parse_function(
+                _parse_function_withouth_TF_op(
                     x,
                     input_size,
                     return_img=return_img,
@@ -437,6 +583,8 @@ def tfrs_data_generator(
                     normalize_age=normalize_age,
                     age_norm_values=age_norm_values,
                     nbr_classes=nbr_classes,
+                    to_categorical=to_categorical,
+                    output_as_RGB=output_as_RGB,
                 )
             )
         ),
@@ -444,21 +592,43 @@ def tfrs_data_generator(
     )
 
     # make the training dataset to iterate forever
-
     if dataset_type == "train":
+        dataset = dataset.shuffle(buffer_size=buffer_size)
         dataset = dataset.repeat()
 
-    # shuffle the training dataset
-    if dataset_type != "test":
-        dataset = dataset.shuffle(buffer_size=buffer_size)
+    """ DATA NORMALIZATION """
+    if all([return_img, normalize_img]):
+        dataset = dataset.map(image_normalization)
+    if all([normalize_age, age_norm_values]):
+        dataset = dataset.map(
+            lambda x, y: age_normalization(x, y, age_norm_values=age_norm_values)
+        )
 
     """ DATA AUGMENTATION """
-    if all([dataset_type != "test", data_augmentation == True, return_img]):
-        # implement data augmentation
-        # dataset = dataset.map(flip)
+    if all([dataset_type == "train", data_augmentation == True, return_img]):
         dataset = dataset.map(rotation)
         dataset = dataset.map(flip)
-        # dataset = dataset.map(brightness)
+        dataset = dataset.map(brightness)
+
+    # This is gust to make the sample weight to work. keep the input features as dict, but labels take out of the dictionary
+    if return_age:
+        dataset = dataset.map(
+            tf.autograph.experimental.do_not_convert(
+                lambda features, targets: (
+                    {"image": features["image"], "age": features["age"]},
+                    targets["label"],
+                )
+            )
+        )
+    else:
+        dataset = dataset.map(
+            tf.autograph.experimental.do_not_convert(
+                lambda features, targets: (
+                    {"image": features["image"]},
+                    targets["label"],
+                )
+            )
+        )
 
     # set bach_size
     dataset = dataset.batch(batch_size=batch_size)
@@ -466,7 +636,6 @@ def tfrs_data_generator(
     # set how many batches to get ready at the time
     if dataset_type == "train":
         dataset = dataset.prefetch(buffer_size)
-        # dataset = dataset.prefetch(buffer_size=tf.data.experimental.AUTOTUNE)
 
     # return the number of steps for this dataset
     dataset_steps = len(file_paths) // batch_size
@@ -481,6 +650,7 @@ def get_img_file_names(
     img_dataset_path: str,
     dataset_type: str,
     file_format: str = "jpeg",
+    return_labels: bool = False,
     **kwargs,
 ):
     """
@@ -537,10 +707,12 @@ def get_img_file_names(
             os.path.basename(f) for f in glob.glob(os.path.join(img_dataset_path, "*"))
         ],
         "task": "detection",
+        "nbr_classes": 2,
         "tumor_min_rpl": 0,
         "tumor_max_rpl": 100,
         "brain_min_rpl": 1,
         "brain_max_rpl": 25,
+        "tumor_loc": ["infra"],
     }
 
     if not kwargs:
@@ -550,7 +722,7 @@ def get_img_file_names(
             if keys not in kwargs.keys():
                 kwargs[keys] = values
 
-    print(kwargs)
+    # print(kwargs)
 
     # initiate variables to be returned
     all_file_names = []
@@ -604,9 +776,10 @@ def get_img_file_names(
             files = glob.glob(
                 os.path.join(img_dataset_path, modality, f"*label_1.{file_format}")
             )
+
             # filter files with relative position of the tumor
             files = [
-                (f, os.path.basename(f).split("_")[1])
+                (f, os.path.basename(f).split("_")[2])
                 for f in files
                 if all(
                     [
@@ -618,13 +791,31 @@ def get_img_file_names(
                 )
             ]
             all_file_names.extend(files)
+
+            # filter based on tumor location
+            # find indexes elements
+            to_keep = []
+            to_remove = []
+            for idx, f in enumerate(all_file_names):
+                f_loc = os.path.basename(f[0]).split("_")[1]
+                if any([f_loc == l for l in kwargs["tumor_loc"]]):
+                    # print(f"keeping {os.path.basename(f[0])}")
+                    to_keep.append(idx)
+                else:
+                    # print(f"removing {os.path.basename(f[0])}")
+                    to_remove.append(idx)
+
+            # print(f"Keeping {len(to_keep)}, removing {len(to_remove)}")
+            all_file_names = [all_file_names[idx] for idx in to_keep]
+            # print(f"{len(all_file_names)} after filtering")
+
             # add the files without tumor if detection
             if kwargs["task"].lower() == "detection":
                 files = glob.glob(
                     os.path.join(img_dataset_path, modality, f"*label_0.{file_format}")
                 )
                 files = [
-                    (f, os.path.basename(f).split("_")[1])
+                    (f, os.path.basename(f).split("_")[2])
                     for f in files
                     if all(
                         [
@@ -637,7 +828,48 @@ def get_img_file_names(
                 ]
                 all_file_names.extend(files)
 
-    return all_file_names
+    if return_labels:
+        if kwargs["task"] == "detection":
+            labels = [
+                1 if "label_1" in os.path.basename(f[0]) else 0 for f in all_file_names
+            ]
+        elif all(
+            [
+                kwargs["task"] == "classification",
+                kwargs["nbr_classes"] == 3,
+            ]
+        ):
+            labels_3_classes = {
+                "ASTROCYTOMA": 0,
+                "EPENDYMOMA": 1,
+                "MEDULLOBLASTOMA": 2,
+            }
+            labels = [
+                labels_3_classes[os.path.basename(f[0]).split("_")[0]]
+                for f in all_file_names
+            ]
+
+        elif all(
+            [
+                kwargs["task"] == "classification",
+                kwargs["nbr_classes"] == 5,
+            ]
+        ):
+            labels_5_classes = {
+                "ASTROCYTOMAinfra": 0,
+                "ASTROCYTOMAsupra": 1,
+                "EPENDYMOMAinfra": 2,
+                "EPENDYMOMAsupra": 3,
+                "MEDULLOBLASTOMAinfra": 4,
+            }
+            labels = [
+                labels_5_classes[os.path.basename(f[0]).split("_")[0]]
+                for f in all_file_names
+            ]
+
+        return [(f[0], f[1], l) for f, l in zip(all_file_names, labels)]
+    else:
+        return all_file_names
 
 
 # %% GET STATISTICS FOR DATA NORMALIZATION
@@ -651,24 +883,25 @@ def get_normalization_values(
     Stript that loops trough the dataset and gets the mean and std used for normalizing the
     images, gradcams and age if required
     """
-    iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
-    next_element = iterator.get_next()
-    with tf.compat.v1.Session() as sess:
-        img, gradCAM, age = [], [], []
-        for _ in range(dataset_steps):
-            sample = sess.run(next_element)
-            img.append(sample[0]["image"][:, :, :, 0])
-            if return_gradCAM_norm_values:
-                gradCAM.append(sample[0]["image"][:, :, :, 1])
-            if return_age_norm_values:
-                age.append(sample[0]["age"])
+    # iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
+    # next_element = iterator.get_next()
+    # with tf.compat.v1.Session() as sess:
+    img, gradCAM, age = [], [], []
+    ds_iter = iter(dataset)
+    for _ in range(dataset_steps):
+        # sample = sess.run(next_element)
+        sample = next(ds_iter)
+        img.append(sample[0]["image"][:, :, :, 0])
+        if return_gradCAM_norm_values:
+            gradCAM.append(sample[0]["image"][:, :, :, 1])
+        if return_age_norm_values:
+            age.append(sample[0]["age"])
 
     img_mean = np.mean(np.vstack(img))
     img_std = np.std(np.vstack(img))
     img_stats = (img_mean, img_std)
 
     if return_gradCAM_norm_values:
-        print(gradCAM[0].mean())
         gradCAM_mean = np.mean(np.vstack(gradCAM))
         gradCAM_std = np.std(np.vstack(gradCAM))
         gradCAM_stats = (gradCAM_mean, gradCAM_std)

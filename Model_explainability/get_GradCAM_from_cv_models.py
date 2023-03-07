@@ -149,12 +149,12 @@ class gradCAM:
         #     )
         # else:
         gradModel = tf.keras.Model(
-                inputs=[self.model.inputs],
-                outputs=[
-                    self.model.get_layer(self.layerName).output,
-                    self.model.output,
-                ],
-            )
+            inputs=[self.model.inputs],
+            outputs=[
+                self.model.get_layer(self.layerName).output,
+                self.model.output,
+            ],
+        )
 
         # replacing softmax with linear activation
         gradModel.layers[-1].activation = tf.keras.activations.linear
@@ -180,7 +180,7 @@ class gradCAM:
             loss = predictions[:, self.classIdx]
 
         grads = tape.gradient(loss, convOutputs)
-        
+
         # sometimes grads becomes NoneType
         if grads is None:
             grads = tf.zeros_like(convOutputs)
@@ -328,10 +328,10 @@ else:
     # # # # # # # # # # # # # # DEBUG
     print("Running in debug mode.")
     args_dict = {
-        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_model_architecture_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False",
+        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Detection_infra_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False",
         "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
         "ANNOTATION_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
-        "NBR_IMG_TO_PROCESS": 10,
+        "NBR_IMG_TO_PROCESS": 3,
         "GPU": "0",
     }
 
@@ -564,9 +564,11 @@ for m_idx, model_dict in enumerate(MODELS):
     name_layers = []
     for layer in model.layers:
         if isinstance(layer, keras.layers.convolutional.Conv2D):
-                name_layers.append(layer.name)
-    name_layers = name_layers[-1::]
+            name_layers.append(layer.name)
+    # name_layers = name_layers[0:10]
 
+    break
+    # %%
     # loop through the test images of this model
     for img_idx in range(len(IMAGES)):
         image = IMAGES[img_idx]["image"]
@@ -590,9 +592,7 @@ for m_idx, model_dict in enumerate(MODELS):
                         end="",
                     )
                     # define gradCAM object for this layer and channel
-                    cam = gradCAM(
-                        model, c, layerName=nl
-                    )
+                    cam = gradCAM(model, c, layerName=nl)
                     # compute gradCAM
                     aus_raw, _ = cam.compute_heatmap(image)
                     # save infom for this channel

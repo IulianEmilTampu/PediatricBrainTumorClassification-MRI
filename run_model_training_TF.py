@@ -26,7 +26,7 @@ from distutils.util import strtobool
 
 from matplotlib import pyplot as plt
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, StratifiedKFold
 from sklearn.model_selection import KFold
 from sklearn.utils.extmath import softmax
 
@@ -226,10 +226,13 @@ else:
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 1,
+        "NBR_FOLDS": 5,
         "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
         "MAX_EPOCHS": 75,
+        "DATA_AUGMENTATION": False,
+        "DATA_NORMALIZATION": True,
+        "DATA_SCALE": True,
         "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/SDM4_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
         "USE_AGE": False,
@@ -240,7 +243,7 @@ else:
         "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TEST_TB_reproducibility",
+        "MODEL_NAME": "TEST",
         "OPTIMIZER": "ADAM",
     }
 
@@ -331,7 +334,7 @@ all_file_names = data_utilities.get_img_file_names(
     brain_min_rpl=1,
     brain_max_rpl=100,
     file_format="tfrecords",
-    tumor_loc=["infra", "supra"],
+    tumor_loc=["infra"],
 )
 
 unique_patien_IDs_with_labels = list(
@@ -344,9 +347,11 @@ args_dict["NBR_SUBJECTS"] = len(unique_patien_IDs_with_labels)
 subj_train_val_idx, subj_test_idx = train_test_split(
     unique_patien_IDs_with_labels,
     stratify=unique_patien_IDs_labels,
-    test_size=0.15,
+    test_size=0.20,
     random_state=args_dict["RANDOM_SEED_NUMBER"],
 )
+
+
 test_files = [
     f[0] for f in all_file_names if any([i[0] == f[1] for i in subj_test_idx])
 ]
@@ -354,6 +359,7 @@ print(f'{"# Train-val subjects":18s}: {len(subj_train_val_idx):2d}')
 print(
     f'{"# Test subjects":18s}: {len(subj_test_idx):2d} ({subj_test_idx} {len(test_files)} total images)'
 )
+
 # get labels for the remaining files so that can perform stratified cross validation
 subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
 class_weights_values = list(
@@ -373,7 +379,7 @@ subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
 # set cross validation
 if args_dict["NBR_FOLDS"] > 1:
-    kf = KFold(
+    kf = StratifiedKFold(
         n_splits=args_dict["NBR_FOLDS"],
         shuffle=True,
         random_state=args_dict["RANDOM_SEED_NUMBER"],
@@ -582,13 +588,13 @@ if look_at_generator:
         batch_size=20,
         buffer_size=1000,
         data_augmentation=True,
-        normalize_img=True,
+        normalize_img=False,
         img_norm_values=img_stats,
         return_gradCAM=True,
         normalize_gradCAM=True,
         gradCAM_norm_values=None,
         return_age=True,
-        normalize_age=True,
+        normalize_age=False,
         age_norm_values=age_stats,
         dataset_type="train",
         nbr_classes=args_dict["NBR_CLASSES"],
@@ -606,7 +612,7 @@ if look_at_generator:
     if Path(test_files[0]).suffix == ".tfrecords":
         show_batched_example_tfrs_dataset(
             gen,
-            nbr_images=15,
+            nbr_images=5,
             show_gradCAM=False,
             show_histogram=True,
             class_names=["ASTR", "EP", "MED"],
@@ -659,52 +665,31 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     tr_files = per_fold_training_files[cv_f]
     random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(tr_files)
 
-    train_gen, train_steps = data_gen(
-        file_paths=tr_files[
-            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
-        ],
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=1000,
-        data_augmentation=False,
-        normalize_img=False,
-        img_norm_values=None,
-        return_gradCAM=args_dict["USE_GRADCAM"],
-        normalize_gradCAM=False,
-        gradCAM_norm_values=None,
-        return_age=args_dict["USE_AGE"],
-        normalize_age=False,
-        age_norm_values=None,
-        dataset_type="test",
-        nbr_classes=args_dict["NBR_CLASSES"],
-    )
+    # get norm stat if needed
+    if args_dict["DATA_NORMALIZATION"]:
+        train_gen, train_steps = data_gen(
+            file_paths=tr_files[
+                0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
+            ],
+            input_size=target_size,
+            batch_size=args_dict["BATCH_SIZE"],
+            buffer_size=1000,
+            return_gradCAM=args_dict["USE_GRADCAM"],
+            return_age=args_dict["USE_AGE"],
+            dataset_type="test",
+            nbr_classes=args_dict["NBR_CLASSES"],
+        )
 
-    # get normalization stats
-    print(f'{" "*6}Getting normalization stats from training generator...')
-    norm_stats = data_utilities.get_normalization_values(
-        train_gen,
-        train_steps,
-        return_age_norm_values=args_dict["USE_AGE"],
-        return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
-    )
-
-    # set flags
-    if all(
-        [
-            True,
-            # args_dict["USE_PRETRAINED_MODEL"],
-            any(
-                [
-                    args_dict["MODEL_TYPE"] == "EfficientNet",
-                    args_dict["MODEL_TYPE"] == "ResNet50",
-                ]
-            ),
-        ]
-    ):
-        img_norm_flag = False
-        print(f'{" "*6}Skipping image normalization (check if on purpose!)...')
+        # get normalization stats
+        print(f'{" "*6}Getting normalization stats from training generator...')
+        norm_stats = data_utilities.get_normalization_values(
+            train_gen,
+            train_steps,
+            return_age_norm_values=args_dict["USE_AGE"],
+            return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
+        )
     else:
-        img_norm_flag = True
+        norm_stats = [None, None, None]
 
     # build actuall training datagen with normalized values
     train_gen, train_steps = data_gen(
@@ -713,22 +698,9 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         ],
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=1000,
-        data_augmentation=False,
-        normalize_img=True if img_norm_flag else False,
-        img_norm_values=norm_stats[0]
-        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
-        else norm_stats,
+        buffer_size=3000,
         return_gradCAM=args_dict["USE_GRADCAM"],
-        normalize_gradCAM=True,
-        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
         return_age=args_dict["USE_AGE"],
-        normalize_age=True,
-        age_norm_values=norm_stats[2]
-        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
-        else norm_stats[1]
-        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
-        else None,
         dataset_type="train",
         nbr_classes=args_dict["NBR_CLASSES"],
         output_as_RGB=True
@@ -751,21 +723,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=1000,
-        data_augmentation=False,
-        normalize_img=True if img_norm_flag else False,
-        img_norm_values=norm_stats[0]
-        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
-        else norm_stats,
         return_gradCAM=args_dict["USE_GRADCAM"],
-        normalize_gradCAM=True,
-        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
         return_age=args_dict["USE_AGE"],
-        normalize_age=True,
-        age_norm_values=norm_stats[2]
-        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
-        else norm_stats[1]
-        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
-        else None,
         dataset_type="val",
         nbr_classes=args_dict["NBR_CLASSES"],
         output_as_RGB=True
@@ -783,21 +742,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
         buffer_size=10,
-        data_augmentation=False,
-        normalize_img=True if img_norm_flag else False,
-        img_norm_values=norm_stats[0]
-        if any([args_dict["USE_GRADCAM"], args_dict["USE_AGE"]])
-        else norm_stats,
         return_gradCAM=args_dict["USE_GRADCAM"],
-        normalize_gradCAM=True,
-        gradCAM_norm_values=norm_stats[1] if args_dict["USE_GRADCAM"] else None,
         return_age=args_dict["USE_AGE"],
-        normalize_age=True,
-        age_norm_values=norm_stats[2]
-        if all([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]])
-        else norm_stats[1]
-        if all([args_dict["USE_AGE"], not args_dict["USE_GRADCAM"]])
-        else None,
         dataset_type="test",
         nbr_classes=args_dict["NBR_CLASSES"],
         output_as_RGB=True
@@ -846,11 +792,14 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             model = models.SimpleDetectionModel_TF(
                 num_classes=args_dict["NBR_CLASSES"],
                 input_shape=input_shape,
+                image_normalization_stats=norm_stats[0],
+                scale_image=args_dict["DATA_SCALE"],
+                data_augmentation=args_dict["DATA_AUGMENTATION"],
                 kernel_size=(3, 3),
                 pool_size=(2, 2),
                 use_age=args_dict["USE_AGE"],
+                age_normalization_stats=norm_stats[2],
                 use_age_thr_tabular_network=False,
-                use_gradCAM=args_dict["USE_GRADCAM"],
             )
 
         elif args_dict["MODEL_TYPE"] == "ResNet9":

@@ -196,37 +196,37 @@ def _parse_function_withouth_TF_op(
     """
 
     # REFINED VERSION
-    # key_features = {
-    #     "image": tf.io.FixedLenFeature([], tf.string),
-    #     "gradCAM": tf.io.FixedLenFeature([], tf.string),
-    #     "age": tf.io.FixedLenFeature([], tf.int64),
-    #     "file_name": tf.io.FixedLenFeature([], tf.string),
-    #     "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
-    #     "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
-    #     "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
-    # }
-
-    # TO MATCH TB's DATASET STRUCTURE
     key_features = {
-        "image_data": tf.io.FixedLenFeature([], tf.string),
-        # "gradCAM": tf.io.FixedLenFeature([], tf.string),
-        "age_days": tf.io.FixedLenFeature([], tf.int64),
-        # "file_name": tf.io.FixedLenFeature([], tf.string),
-        # "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
-        "image_label_3_classes": tf.io.FixedLenFeature([], tf.int64),
-        "image_label_5_classes": tf.io.FixedLenFeature([], tf.int64),
+        "image": tf.io.FixedLenFeature([], tf.string),
+        "gradCAM": tf.io.FixedLenFeature([], tf.string),
+        "age": tf.io.FixedLenFeature([], tf.int64),
+        "file_name": tf.io.FixedLenFeature([], tf.string),
+        "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
+        "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
+        "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
     }
+
+    # # TO MATCH TB's DATASET STRUCTURE
+    # key_features = {
+    #     "image_data": tf.io.FixedLenFeature([], tf.string),
+    #     # "gradCAM": tf.io.FixedLenFeature([], tf.string),
+    #     "age_days": tf.io.FixedLenFeature([], tf.int64),
+    #     # "file_name": tf.io.FixedLenFeature([], tf.string),
+    #     # "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
+    #     "image_label_3_classes": tf.io.FixedLenFeature([], tf.int64),
+    #     "image_label_5_classes": tf.io.FixedLenFeature([], tf.int64),
+    # }
 
     # take out specified features (key_features) from the example
     parsed_features = tf.io.parse_single_example(proto, key_features)
 
     if return_img:
         # decode image from the example (convert from string of bytes and reshape)
-        # # REFINED VERSION
-        # image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
+        # REFINED VERSION
+        image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
 
-        # TO MATCH TB's DATASET STRUCTURE
-        image = tf.io.decode_raw(parsed_features["image_data"], out_type=tf.float32)
+        # # TO MATCH TB's DATASET STRUCTURE
+        # image = tf.io.decode_raw(parsed_features["image_data"], out_type=tf.float32)
 
         image = tf.reshape(image, shape=input_size)
 
@@ -243,18 +243,18 @@ def _parse_function_withouth_TF_op(
 
     # take out the labels
     if any([nbr_classes == 3, nbr_classes == 5]):
-        # # REFINED VERSION
-        # label = (
-        #     tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
-        # )
-
-        # TO MATCH TB's DATASET STRUCTURE
+        # REFINED VERSION
         label = (
-            tf.cast(
-                parsed_features[f"image_label_{nbr_classes}_classes"], dtype=tf.int32
-            )
-            - 1
+            tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
         )
+
+        # # TO MATCH TB's DATASET STRUCTURE
+        # label = (
+        #     tf.cast(
+        #         parsed_features[f"image_label_{nbr_classes}_classes"], dtype=tf.int32
+        #     )
+        #     - 1
+        # )
 
     else:
         label = tf.cast(parsed_features[f"slice_with_tumor"], dtype=tf.int32)
@@ -609,27 +609,28 @@ def get_img_file_names(
     if dataset_type.upper() == "CBTN":
         for modality in kwargs["modalities"]:
             # work on the images with tumor
-            # THIS IS FOR THE UPDATED VERSION OF THE DATASET
 
+            # REFINED DATASET
             files = glob.glob(
                 os.path.join(img_dataset_path, modality, f"*.{file_format}")
             )
 
-            # THIS IS FOR TAMARAS DATASET
-            files = glob.glob(
-                os.path.join(img_dataset_path, modality, f"*.{file_format}")
-            )
+            # # THIS IS FOR TAMARAS DATASET
+            # files = glob.glob(
+            #     os.path.join(img_dataset_path, modality, f"*.{file_format}")
+            # )
 
-            # # REFINED DATASET
-            # class_index = 0
-            # subj_index = 2
-            # rlp_index = -3
-            # location_index = 1
-
-            # TO MATCH TB's DATASET STRUCTURE
+            # REFINED DATASET
             class_index = 0
-            subj_index = 1
-            rlp_index = -1
+            subj_index = 2
+            rlp_index = -3
+            location_index = 1
+
+            # # TO MATCH TB's DATASET STRUCTURE
+            # print(files[0])
+            # class_index = 0
+            # subj_index = 1
+            # rlp_index = -1
 
             # filter files with relative position of the tumor
             files = [

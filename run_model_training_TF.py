@@ -172,6 +172,24 @@ if not su_debug_flag:
         default=False,
         help="Specify if the model should use the age information. If true, the age information is encoded using a fuly connected model and feature fusion is used to combine image and age infromation.",
     )
+
+    parser.add_argument(
+        "-age_encoder_version",
+        "--AGE_ENCODER_VERSION",
+        required=False,
+        type=str,
+        default="no_encoder",
+        help="Available age encoders: no_encoder | simple_age_encode | large_age_encoder",
+    )
+    parser.add_argument(
+        "-age_normalization",
+        "--AGE_NORMALIZATION",
+        required=False,
+        dest="AGE_NORMALIZATION",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        help="Specify if the age should be normalized. If True, age is normalized using mean and std from the trianing dataset ([-1,1] norm).",
+    )
     parser.add_argument(
         "-use_gradCAM",
         "--USE_GRADCAM",
@@ -261,15 +279,17 @@ else:
         "USE_PRETRAINED_MODEL": False,
         "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
         "FREEZE_WEIGHTS": True,
-        "USE_AGE": False,
+        "USE_AGE": True,
+        "AGE_NORMALIZATION": True,
+        "AGE_ENCODER_VERSION": "no_encoder",
         "USE_GRADCAM": False,
         "LOSS": "MCC_and_CCE_Loss",
-        "RANDOM_SEED_NUMBER": 20091229,
+        "RANDOM_SEED_NUMBER": 1111,
         "MR_MODALITIES": ["T2"],
         "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "COMPARISON_DS_VERSIONS",
+        "MODEL_NAME": "TEST_age_encoders",
         "OPTIMIZER": "ADAM",
     }
 
@@ -784,8 +804,10 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             kernel_size=(3, 3),
             pool_size=(2, 2),
             use_age=args_dict["USE_AGE"],
-            age_normalization_stats=norm_stats[2],
-            use_age_thr_tabular_network=False,
+            age_normalization_stats=norm_stats[2]
+            if args_dict["AGE_NORMALIZATION"]
+            else None,
+            age_encoder_version=args_dict["AGE_ENCODER_VERSION"],
             use_pretrained=args_dict["USE_PRETRAINED_MODEL"],
             pretrained_model_path=args_dict["PATH_TO_PRETRAINED_MODEL"],
             freeze_weights=args_dict["FREEZE_WEIGHTS"],
@@ -841,17 +863,22 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         )
 
     # ################################# COMPILE MODEL
+
     # learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
     #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
     # )
 
     # values obtained using the LRFind callback
-    learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-        initial_learning_rate=1e-3,
-        maximal_learning_rate=1e-1,
-        scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
-        step_size=2 * train_steps,
-    )
+
+    # learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
+    #     initial_learning_rate=1e-3,
+    #     maximal_learning_rate=1e-1,
+    #     scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
+    #     step_size=2 * train_steps,
+    # )
+
+    learning_rate_fn = None
+
     # plot learning rate
     if isinstance(
         learning_rate_fn, tfa.optimizers.cyclical_learning_rate.CyclicalLearningRate
@@ -877,24 +904,23 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     if args_dict["OPTIMIZER"] == "SGD":
         print(f'{" "*6}Using SGD optimizer.')
         optimizer = tf.keras.optimizers.SGD(
-            learning_rate=args_dict["LEARNING_RATE"],
+            learning_rate=learning_rate_fn
+            if learning_rate_fn
+            else args_dict["LEARNING_RATE"],
             decay=1e-6,
             momentum=0.9,
             nesterov=True,
             clipvalue=0.5,
         )
-        # optimizer = tf.keras.optimizers.SGD(
-        #     learning_rate=learning_rate_fn,
-        #     nesterov=True,
-        # )
+
     elif args_dict["OPTIMIZER"] == "ADAM":
         print(f'{" "*6}Using AdamW optimizer.')
 
-        # optimizer = tfa.optimizers.AdamW(
-        #     learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
-        # )
         optimizer = tfa.optimizers.AdamW(
-            learning_rate=learning_rate_fn, weight_decay=0.0001
+            learning_rate=learning_rate_fn
+            if learning_rate_fn
+            else args_dict["LEARNING_RATE"],
+            weight_decay=0.0001,
         )
 
     # wrap using LookAhead which helps smoothing out validation curves

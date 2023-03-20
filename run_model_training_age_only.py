@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -156,14 +156,6 @@ if not su_debug_flag:
         help="Specify the percentage of the dataset to use during training and validation. This is for debug",
     )
     parser.add_argument(
-        "-model_type",
-        "--MODEL_TYPE",
-        required=False,
-        type=str,
-        default="SDM4",
-        help="Specify model to use during training. Chose among the ones available in the models.py file.",
-    )
-    parser.add_argument(
         "-optimizer",
         "--OPTIMIZER",
         required=False,
@@ -195,13 +187,14 @@ else:
     # # # # # # # # # # # # # # DEBUG
     args_dict = {
         "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/run/media/iulta54/GROUP_HD1/Datasets/CBTN/TFR_DATASET/",
+        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
         "DATASET_TYPE": "CBTN",
+        "MR_MODALITIES": ["T2"],
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 1,
-        "OPTIMIZER": "SGD",
-        "LEARNING_RATE": 0.005,
+        "NBR_FOLDS": 5,
+        "OPTIMIZER": "ADAM",
+        "LEARNING_RATE": 0.01,
         "LOSS": "CCE",
         "BATCH_SIZE": 8,
         "MAX_EPOCHS": 25,
@@ -209,7 +202,7 @@ else:
         "DATA_NORMALIZATION": True,
         "RANDOM_SEED_NUMBER": 20091229,
         "DEBUG_DATASET_FRACTION": 1,
-        "MODEL_NAME": "Train_on_age_only",
+        "MODEL_NAME": "TTTT",
     }
 
 # revise model name
@@ -298,7 +291,7 @@ all_file_names = data_utilities.get_img_file_names(
     tumor_max_rpl=90,
     brain_min_rpl=1,
     brain_max_rpl=100,
-    file_format="tfrecords" if args_dict["TFR_DATA"] else "jpeg",
+    file_format="tfrecords",
     tumor_loc=["infra", "supra"],
 )
 
@@ -552,40 +545,67 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # ################################# COMPILE MODEL
-    learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-        initial_learning_rate=1e-2,
-        maximal_learning_rate=1e-0
-        if args_dict["MODEL_VERSION"] == "age_to_classes"
-        else 1e-1,
-        scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
-        step_size=2 * train_steps,
-    )
+    # learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
+    #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
+    # )
+
+    # values obtained using the LRFind callback
+
+    # learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
+    #     initial_learning_rate=1e-2,
+    #     maximal_learning_rate=1e0,
+    #     scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
+    #     step_size=2 * train_steps,
+    # )
+
+    learning_rate_fn = None
+
+    # plot learning rate
+    if isinstance(
+        learning_rate_fn, tfa.optimizers.cyclical_learning_rate.CyclicalLearningRate
+    ):
+        fig = plt.figure()
+        step = np.arange(0, args_dict["MAX_EPOCHS"] * train_steps)
+        lr = learning_rate_fn(step)
+        ax1 = fig.add_subplot(111)
+        ax2 = ax1.twiny()
+        ax1.plot(step, lr)
+        ax1.set_xlabel("Steps")
+        ax1.set_ylabel("Learning Rate")
+        ax2.set_xlim(ax1.get_xlim())
+        ax2.set_xticks([i * train_steps for i in range(args_dict["MAX_EPOCHS"])])
+        ax2.set_xticklabels([i for i in range(args_dict["MAX_EPOCHS"])])
+        ax2.set_xlabel("Epochs")
+        # save figure
+        fig.savefig(
+            os.path.join(os.path.dirname(save_model_path), "learning_rate_curve.png")
+        )
+        plt.close(fig)
 
     if args_dict["OPTIMIZER"] == "SGD":
         print(f'{" "*6}Using SGD optimizer.')
         optimizer = tf.keras.optimizers.SGD(
-            learning_rate=args_dict["LEARNING_RATE"],
+            learning_rate=learning_rate_fn
+            if learning_rate_fn
+            else args_dict["LEARNING_RATE"],
             decay=1e-6,
             momentum=0.9,
             nesterov=True,
             clipvalue=0.5,
         )
-        # optimizer = tf.keras.optimizers.SGD(
-        #     learning_rate=learning_rate_fn,
-        #     nesterov=True,
-        # )
+
     elif args_dict["OPTIMIZER"] == "ADAM":
         print(f'{" "*6}Using AdamW optimizer.')
 
         optimizer = tfa.optimizers.AdamW(
-            learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
+            learning_rate=learning_rate_fn
+            if learning_rate_fn
+            else args_dict["LEARNING_RATE"],
+            weight_decay=0.0001,
         )
-        # optimizer = tfa.optimizers.AdamW(
-        #     learning_rate=learning_rate_fn, weight_decay=0.0001
-        # )
 
     # wrap using LookAhead which helps smoothing out validation curves
-    # optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
+    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
 
     if args_dict["LOSS"] == "MCC":
         print(f'{" "*6}Using MCC loss.')

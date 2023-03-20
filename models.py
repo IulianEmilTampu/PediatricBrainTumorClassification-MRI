@@ -26,8 +26,6 @@ from tensorflow.keras.initializers import glorot_uniform
 import tensorflow_addons as tfa
 
 # %% EfficientNet
-
-
 def EfficientNet(
     num_classes: int,
     input_shape: Union[list, tuple],
@@ -230,7 +228,7 @@ def SimpleDetectionModel_TF(
     pool_size: Union[list, tuple] = (2, 2),
     use_age: bool = False,
     age_normalization_stats: tuple = None,
-    use_age_thr_tabular_network: bool = False,
+    age_encoder_version: str = "no_encoder",  # simple_age_encoder (one dense layer), large_age_encoder (3 dense layers),
     debug: bool = False,
     use_pretrained: bool = False,
     pretrained_model_path: str = None,
@@ -292,6 +290,7 @@ def SimpleDetectionModel_TF(
             )(x)
             x = tf.keras.layers.RandomContrast(factor=0.2)(x)
 
+        # build image encoder
         for nbr_filter in [64, 128, 256, 512]:
             x = Conv2D(
                 filters=nbr_filter,
@@ -330,24 +329,64 @@ def SimpleDetectionModel_TF(
         kernel_constraint=denseConstrain,
     )(x)
 
-    # x = tfa.layers.InstanceNormalization()(x)
-    # x = tf.keras.layers.LeakyReLU(
-    #     alpha=0.3,
-    # )(x)
+    x = tfa.layers.InstanceNormalization()(x)
+    x = tf.keras.layers.LeakyReLU(
+        alpha=0.3,
+    )(x)
     x = Dropout(denseDropoutRate)(x)
 
     if use_age:
-        # @ToDo Implement tabular network
-        # if use_age_thr_tabular_network:
-        # else:
         age_input = Input(shape=(1,), name="age")
         enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
         if age_normalization_stats:
             enc_age = tf.keras.layers.Normalization(
                 mean=age_normalization_stats[0], variance=age_normalization_stats[1]
             )(enc_age)
-        x = tf.keras.layers.concatenate([x, enc_age])
 
+        # work on age encoder
+        a = enc_age
+        if age_encoder_version == "no_encoder":
+            x = tf.keras.layers.concatenate([x, a])
+        else:
+            if age_encoder_version == "simple_age_encoder":
+                """
+                This is Artzi's version where the encoded image and age are vectors with size number of classes which are concatenated
+                """
+                layer_specs = [num_classes]
+            elif age_encoder_version == "large_age_encoder":
+                layer_specs = [8, 16, 32, num_classes]
+            # build age encoder based on layer_specs
+            for nodes in layer_specs:
+                a = Dense(
+                    units=nodes,
+                    activation=None,
+                    kernel_regularizer=denseRegularizer,
+                    kernel_constraint=denseConstrain,
+                )(a)
+                a = tfa.layers.InstanceNormalization()(a)
+                a = tf.keras.layers.LeakyReLU(
+                    alpha=0.3,
+                )(a)
+                a = Dropout(denseDropoutRate)(a)
+
+            # compress image vector
+            x = x = Dense(
+                units=num_classes,
+                activation=denseActivation,
+                kernel_regularizer=denseRegularizer,
+                kernel_constraint=denseConstrain,
+            )(x)
+
+            x = tfa.layers.InstanceNormalization()(x)
+            x = tf.keras.layers.LeakyReLU(
+                alpha=0.3,
+            )(x)
+            x = Dropout(denseDropoutRate)(x)
+
+            # concatenate
+            x = tf.keras.layers.concatenate([x, a])
+
+    # the final classifier
     output = Dense(
         units=num_classes,
         activation="softmax",
@@ -938,8 +977,6 @@ def ViT_2(
 
 
 # %% ############################ AGE ONLY MODELS
-
-
 def age_only_model(
     num_classes: int,
     model_version: str = "age_to_classes",

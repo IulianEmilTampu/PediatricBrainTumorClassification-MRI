@@ -329,11 +329,11 @@ def SimpleDetectionModel_TF(
         kernel_constraint=denseConstrain,
     )(x)
 
-    x = tfa.layers.InstanceNormalization()(x)
-    x = tf.keras.layers.LeakyReLU(
-        alpha=0.3,
-    )(x)
-    x = Dropout(denseDropoutRate)(x)
+    # x = tfa.layers.InstanceNormalization()(x)
+    # x = tf.keras.layers.LeakyReLU(
+    #     alpha=0.3,
+    # )(x)
+    # x = Dropout(denseDropoutRate)(x)
 
     if use_age:
         age_input = Input(shape=(1,), name="age")

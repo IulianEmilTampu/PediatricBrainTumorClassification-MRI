@@ -8,6 +8,7 @@ import tensorflow as tf
 import keras
 import glob
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 from time import time
 
@@ -431,7 +432,7 @@ def tfrs_data_generator(
         dataset = dataset.prefetch(buffer_size)
 
     # return the number of steps for this dataset
-    dataset_steps = len(file_paths) // batch_size
+    dataset_steps = np.ceil(len(file_paths) / batch_size)
 
     return dataset, dataset_steps
 
@@ -774,3 +775,35 @@ def get_normalization_values(
         return img_stats, gradCAM_stats, age_stats
     else:
         return img_stats, None, None
+
+
+def plot_tfr_dataset_intensity_dist(
+    tf_dataset,
+    tf_dataset_steps,
+    save_path: str = None,
+    plot_name: str = "Dataset_intensity_distribution",
+    background_value: float = 0.0,
+):
+    """
+    Plots the dataset intensity distribution given a tf_dataset that can be iterated
+    """
+    samples = []
+    ds_iter = iter(tf_dataset)
+
+    for i in range(tf_dataset_steps):
+        x, y = next(ds_iter)
+        samples.append(x["image"].numpy())
+    samples = np.vstack(samples)
+
+    # plot histogram
+    fig = plt.figure()
+    plt.hist(
+        np.ma.masked_where(samples.ravel() == background_value, samples.ravel()),
+        bins=256,
+    )
+    plt.title(plot_name)
+    if save_path:
+        fig.savefig(os.path.join(save_path, f"{plot_name}_distribution.png"))
+        plt.close(fig)
+    else:
+        plt.show()

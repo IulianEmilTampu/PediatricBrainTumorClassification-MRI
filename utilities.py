@@ -188,9 +188,9 @@ def plotConfusionMatrix(
     Funtion that plots the confision matrix given the ground truths and the predictions
     """
     # convert from categorical if GT and PRED are categorical
-    if GT[0].size != 1:
+    if isinstance(GT[0], (list, np.ndarray)):
         GT = GT.argmax(axis=-1)
-    if PRED[0].size != 1:
+    if isinstance(PRED[0], (list, np.ndarray)):
         PRED = PRED.argmax(axis=-1)
 
     # compute confusion matrix

@@ -115,73 +115,103 @@ class SaveBestModelWeights(tf.keras.callbacks.Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         metric_value = logs[self.monitor]
-        print(f"Saving model weight callBack. Monitor {self.monitor}, mode {self.mode}")
-        print(f"Current best: {self.best}")
-        print(f"Current value: {metric_value}")
 
         if self.mode == "max":
             if metric_value > self.best:
+                print(
+                    f"Saving model weight callBack. Monitor {self.monitor}, mode {self.mode}"
+                )
+                print(f"Current best: {self.best}")
+                print(f"Current value: {metric_value}")
                 self.best = metric_value
-                self.best_weights = self.model.get_weights()
+                # self.best_weights = self.model.get_weights()
                 # save model meights
                 print(f"Saving model weights at: {self.save_path}")
-                self.model.save_weights(self.save_path, overwrite=True)
+                # self.model.save_weights(self.save_path, overwrite=True)
+                self.model.save(
+                    os.path.join(self.save_path, f"best_model"),
+                    save_format="h5",
+                    include_optimizer=False,
+                )
         else:
             if metric_value < self.best:
+                print(
+                    f"Saving model weight callBack. Monitor {self.monitor}, mode {self.mode}"
+                )
+                print(f"Current best: {self.best}")
+                print(f"Current value: {metric_value}")
                 self.best = metric_value
                 self.best_weights = self.model.get_weights()
                 # save model meights
                 print(f"Saving model weights at: {self.save_path}")
-                self.model.save_weights(self.save_path, overwrite=True)
-
-
-class WarmUpCosine(tf.keras.optimizers.schedules.LearningRateSchedule):
-    def __init__(
-        self, learning_rate_base, total_steps, warmup_learning_rate, warmup_steps
-    ):
-        super().__init__()
-
-        self.learning_rate_base = learning_rate_base
-        self.total_steps = total_steps
-        self.warmup_learning_rate = warmup_learning_rate
-        self.warmup_steps = warmup_steps
-        self.pi = tf.constant(np.pi)
-
-    def __call__(self, step):
-        if self.total_steps < self.warmup_steps:
-            raise ValueError("Total_steps must be larger or equal to warmup_steps.")
-
-        cos_annealed_lr = tf.cos(
-            self.pi
-            * (tf.cast(step, tf.float32) - self.warmup_steps)
-            / float(self.total_steps - self.warmup_steps)
-        )
-        learning_rate = 0.5 * self.learning_rate_base * (1 + cos_annealed_lr)
-
-        if self.warmup_steps > 0:
-            if self.learning_rate_base < self.warmup_learning_rate:
-                raise ValueError(
-                    "Learning_rate_base must be larger or equal to "
-                    "warmup_learning_rate."
+                self.model.save(
+                    os.path.join(self.save_path, f"best_model"),
+                    save_format="h5",
+                    include_optimizer=False,
                 )
-            slope = (
-                self.learning_rate_base - self.warmup_learning_rate
-            ) / self.warmup_steps
-            warmup_rate = slope * tf.cast(step, tf.float32) + self.warmup_learning_rate
-            learning_rate = tf.where(
-                step < self.warmup_steps, warmup_rate, learning_rate
-            )
-        return tf.where(
-            step > self.total_steps, 0.0, learning_rate, name="learning_rate"
-        )
 
-    def get_config(self):
 
-        config = {
-            "learning_rate_base": self.learning_rate_base,
-            "total_steps": self.total_steps,
-            "warmup_learning_rate": self.warmup_learning_rate,
-            "warmup_steps": self.warmup_steps,
-            "pi": self.pi,
-        }
-        return config
+class LRFind(tf.keras.callbacks.Callback):
+    def __init__(self, min_lr, max_lr, n_rounds):
+        self.min_lr = min_lr
+        self.max_lr = max_lr
+        self.step_up = (max_lr / min_lr) ** (1 / n_rounds)
+        self.lrs = []
+        self.losses = []
+
+    def on_train_begin(self, logs=None):
+        self.weights = self.model.get_weights()
+        self.model.optimizer.lr = self.min_lr
+
+    def on_train_batch_end(self, batch, logs=None):
+        self.lrs.append(self.model.optimizer.lr.numpy())
+        self.losses.append(logs["loss"])
+        self.model.optimizer.lr = self.model.optimizer.lr * self.step_up
+        if self.model.optimizer.lr > self.max_lr:
+            self.model.stop_training = True
+
+    def on_train_end(self, logs=None):
+        self.model.set_weights(self.weights)
+
+
+# %%
+
+# importlib.reload(tf_callbacks)
+
+# model = models.SimpleDetectionModel_TF(
+#             num_classes=args_dict["NBR_CLASSES"],
+#             input_shape=input_shape,
+#             image_normalization_stats=norm_stats[0],
+#             scale_image=args_dict["DATA_SCALE"],
+#             data_augmentation=args_dict["DATA_AUGMENTATION"],
+#             kernel_size=(3, 3),
+#             pool_size=(2, 2),
+#             use_age=args_dict["USE_AGE"],
+#             age_normalization_stats=norm_stats[2],
+#             use_age_thr_tabular_network=False,
+#             use_pretrained=False,
+#             pretrained_model_path=None,
+#             freeze_weights=None,
+#         )
+
+# model.compile(
+#         optimizer=tf.keras.optimizers.Adam(),
+#         loss=tf.keras.losses.CategoricalCrossentropy(),
+#         metrics=[
+#             "accuracy"])
+
+# EPOCHS = 5
+# BATCH_SIZE = 32
+# lr_finder_steps = train_steps
+# lr_find = tf_callbacks.LRFind(1e-4, 1e-1, lr_finder_steps)
+
+# model.fit(
+#     train_gen,
+#     steps_per_epoch=train_steps,
+#     epochs=5,
+#     callbacks=[lr_find]
+# )
+
+# plt.plot(lr_find.lrs, lr_find.losses)
+# plt.xscale('log')
+# plt.show()

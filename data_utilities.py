@@ -7,6 +7,7 @@ import numpy as np
 import tensorflow as tf
 import keras
 import glob
+from pathlib import Path
 
 from time import time
 
@@ -17,21 +18,23 @@ Build datagenerator object which can be used to get data from TFR or image files
 
 
 def img_data_generator(
-    sample_files,
+    file_paths,
     normalize_img: bool = True,
-    use_GradCAM_loc: bool = False,
+    return_gradCAM: bool = False,
     path_to_GradCAMs: str = None,
-    use_age: bool = False,
-    normalize_age: bool = True,
+    return_age: bool = False,
     batch_size: int = 32,
+    buffer_size: int = None,
+    nbr_classes: int = 2,
     dataset_type: str = "training",
     rnd_seed: int = 29122009,
-    target_size: tuple = (224, 224),
+    input_size: tuple = (224, 224),
+    output_as_RGB: bool = False,
 ):
     """
     Script that takes the filenames and uses the tf flow_from_dataframe
     to generate a dataset that digests the data.
-    @ToDo: pake the function pretty.
+    @ToDo: make the function pretty.
 
 
     Steps
@@ -47,22 +50,22 @@ def img_data_generator(
 
     # get the labels
     labels = []
-    for f in sample_files:
+    for f in file_paths:
         start = os.path.basename(f).index(start_pattern)
         stop = os.path.basename(f).rindex(end_pattern)
         labels.append(os.path.basename(f)[start + len(start_pattern) : stop])
 
     # get the age information
-    if use_age:
+    if return_age:
         # get the age from the file names
-        age = [int(os.path.basename(f).split("_")[2][0:-1]) for f in sample_files]
+        age = [int(os.path.basename(f).split("_")[2][0:-1]) for f in file_paths]
         if normalize_age:
             age = (age - np.mean(age)) / np.std(age)
     else:
         age = [None] * len(labels)
 
     # get the gradCAM files
-    if use_GradCAM_loc:
+    if return_gradCAM:
         # build file names of GradCAM files based on the image files (this makes sure we have all the GradCAMs)
         if path_to_GradCAMs is None:
             raise ValueError(
@@ -70,7 +73,7 @@ def img_data_generator(
             )
         path_to_GradCAM_files = [
             os.path.join(path_to_GradCAMs, f"gradCAM_{os.path.basename(f)}")
-            for f in sample_files
+            for f in file_paths
         ]
     else:
         path_to_GradCAM_files = [None] * len(labels)
@@ -78,7 +81,7 @@ def img_data_generator(
     # build dataframe
     dataset_dataframe = pd.DataFrame(
         {
-            "path_to_sample": sample_files,
+            "path_to_sample": file_paths,
             "path_to_GradCAM_files": path_to_GradCAM_files,
             "age": age,
             "label": labels,
@@ -86,35 +89,37 @@ def img_data_generator(
     )
 
     # build datagenerator depending on the configurations
-    if dataset_type == "training":
-        preprocessing = keras.preprocessing.image.ImageDataGenerator(
-            rescale=1.0 / 255,
-            shear_range=0.2,
-            zoom_range=0.2,
-            rotation_range=45,
-            horizontal_flip=True,
-            vertical_flip=True,
-        )
-    elif all(
-        [any([dataset_type == "validation", dataset_type == "testing"]), normalize_img]
-    ):
-        preprocessing = keras.preprocessing.image.ImageDataGenerator(
-            rescale=1.0 / 255,
-        )
-    elif all(
-        [
-            any([dataset_type == "validation", dataset_type == "testing"]),
-            not normalize_img,
-        ]
-    ):
-        preprocessing = keras.preprocessing.image.ImageDataGenerator(
-            rescale=1.0,
-        )
-
-    else:
-        raise ValueError(
-            f"Unknown dataset type. Accepted one of the following: training, validation, testing.\nGiven {dataset_type}"
-        )
+    # if dataset_type == "training":
+    #     preprocessing = keras.preprocessing.image.ImageDataGenerator(
+    #         rescale=1.0 / 255,
+    #         shear_range=0.2,
+    #         zoom_range=0.2,
+    #         rotation_range=45,
+    #         horizontal_flip=True,
+    #         vertical_flip=True,
+    #     )
+    # elif all(
+    #     [any([dataset_type == "validation", dataset_type == "testing"]), normalize_img]
+    # ):
+    #     preprocessing = keras.preprocessing.image.ImageDataGenerator(
+    #         rescale=1.0 / 255,
+    #     )
+    # elif all(
+    #     [
+    #         any([dataset_type == "validation", dataset_type == "testing"]),
+    #         not normalize_img,
+    #     ]
+    # ):
+    #     preprocessing = keras.preprocessing.image.ImageDataGenerator(
+    #         rescale=1.0,
+    #     )
+    # else:
+    # raise ValueError(
+    #     f"Unknown dataset type. Accepted one of the following: training, validation, testing.\nGiven {dataset_type}"
+    # )
+    preprocessing = keras.preprocessing.image.ImageDataGenerator(
+        rescale=1.0,
+    )
 
     # build sample generator
     sample_data_generator = preprocessing.flow_from_dataframe(
@@ -127,11 +132,10 @@ def img_data_generator(
         seed=rnd_seed if rnd_seed else None,
         shuffle=True if dataset_type == "training" else False,
         class_mode="categorical",
-        target_size=target_size,
-        color_mode="grayscale",
+        target_size=input_size,
+        color_mode="grayscale" if not output_as_RGB else "rgb",
     )
-
-    return sample_data_generator
+    return sample_data_generator, len(file_paths) // batch_size
 
 
 # %% DATA UTILITIES FOR TFR_records
@@ -156,150 +160,6 @@ The hiper-parameters needed for the preparation of the dataset are:
 """
 import tensorflow as tf
 import pandas as pd
-
-
-def _parse_function(
-    proto,
-    input_size,
-    return_img: bool = True,
-    normalize_img: bool = True,
-    img_norm_values: tuple = None,
-    return_gradCAM: bool = False,
-    normalize_gradCAM: bool = True,
-    gradCAM_norm_values: tuple = None,
-    return_age: bool = False,
-    normalize_age: bool = False,
-    age_norm_values: tuple = None,
-    nbr_classes: int = 3,
-    to_categorical: bool = True,
-    output_as_RGB: bool = False,
-):
-    """
-    This function parses a single TF examples.
-    In this implementation, the sample is only parsed and brought back to its
-    original shape. Note that other manipulations can be applied if needed
-    (not data augmentation, for example addigng extra channels)
-
-    INPUT
-    proto : tf.data.TFRecordDataset
-        This (internaly) has the link to the path where an TF example is stored.
-    input_size : tuple or list
-        Size of the image to be parce. Note that the size of the image is also stored
-        in the tf example, but given that the code is built into a graph, the size
-        of the image can not be left unspecified (the parced input dimentions are only
-        tensors which value is defined at runtime - the resize function need values
-        available during graph construction).
-
-    OUTPUT
-    image : tf eager tensor (has the numpy() attribute)
-        Tensor of the image encoded in the TFRecord example
-    label : tf eager tensor (has the numpy() attribute)
-        Tensor of the label encoded in the TFRecord example
-    """
-
-    key_features = {
-        "image": tf.io.FixedLenFeature([], tf.string),
-        "gradCAM": tf.io.FixedLenFeature([], tf.string),
-        "age": tf.io.FixedLenFeature([], tf.int64),
-        "file_name": tf.io.FixedLenFeature([], tf.string),
-        "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
-        "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
-        "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
-    }
-
-    # take out specified features (key_features) from the example
-    parsed_features = tf.io.parse_single_example(proto, key_features)
-    if return_img:
-        # decode image from the example (convert from string of bytes and reshape)
-        image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
-        image = tf.reshape(image, shape=input_size)
-        if normalize_img:
-            if img_norm_values:
-                image = tf.math.divide(
-                    tf.math.subtract(image, img_norm_values[0]), img_norm_values[1]
-                )
-            else:
-                image = tf.math.divide(image, 255)
-                image = tf.math.multiply(image, 2)
-                image = tf.math.subtract(image, 1)
-        # image = tf.stack([image, image, image], axis=-1)
-        # image = tf.image.resize(image, input_size)
-
-    if return_gradCAM:
-        # decode image from the example (convert from string of bytes and reshape)
-        gradCAM = tf.io.decode_raw(parsed_features["gradCAM"], out_type=tf.float32)
-        gradCAM = tf.reshape(gradCAM, shape=input_size)
-        if normalize_gradCAM:
-            if gradCAM_norm_values:
-                gradCAM = tf.math.divide(
-                    tf.math.subtract(gradCAM, gradCAM_norm_values[0]),
-                    gradCAM_norm_values[1],
-                )
-            else:
-                gradCAM = tf.math.divide(gradCAM, 255)
-                gradCAM = tf.math.multiply(gradCAM, 2)
-                gradCAM = tf.math.subtract(gradCAM, 1)
-        gradCAM = tf.cast(gradCAM, dtype=tf.float32)
-        # gradCAM = tf.image.resize(gradCAM, gradCAM)
-
-    if return_age:
-        # parsing age
-        age = parsed_features["age"]
-        age = tf.cast(age, dtype=tf.float64)
-        if normalize_age:
-            age = tf.math.divide(
-                tf.math.subtract(age, age_norm_values[0]), age_norm_values[1]
-            )
-
-    # take out the labels
-    if any([nbr_classes == 3, nbr_classes == 5]):
-        label = (
-            tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
-        )
-    else:
-        label = tf.cast(parsed_features[f"slice_with_tumor"], dtype=tf.int32)
-
-    # convert to categorical
-    if to_categorical:
-        label = tf.cast(tf.one_hot(label, nbr_classes), dtype=tf.float32)
-        # label = tf.keras.utils.to_categorical(label, nbr_classes, dtype=tf.float32)
-
-    if all([return_img, return_gradCAM, return_age]):
-        # fix number of output channels (usually 3 for pre-trained models on imageNet)
-        if output_as_RGB:
-            image = tf.stack([image, image, gradCAM], axis=-1)
-        else:
-            image = tf.stack([image, gradCAM], axis=-1)
-        return {"image": image, "age": age}, {"label": label}
-
-    elif all([return_img, return_gradCAM, not return_age]):
-        if output_as_RGB:
-            image = tf.stack([image, image, gradCAM], axis=-1)
-        else:
-            image = tf.stack([image, gradCAM], axis=-1)
-        return {"image": image}, {"label": label}
-    elif all([return_img, not return_gradCAM, return_age]):
-        if output_as_RGB:
-            image = tf.stack([image, image, image], axis=-1)
-        else:
-            image = tf.expand_dims(image, axis=-1)
-        return {"image": image, "age": age}, {"label": label}
-    elif all([return_img, not return_gradCAM, not return_age]):
-        if output_as_RGB:
-            image = tf.stack([image, image, image], axis=-1)
-        else:
-            image = tf.expand_dims(image, axis=-1)
-        return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
-    elif all([not return_img, return_gradCAM, return_age]):
-        if output_as_RGB:
-            gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
-        return ({"image": gradCAM, "age": age}, {"label": label})
-    elif all([not return_img, not return_gradCAM, return_age]):
-        return {"age": age}, {"label": label}
-    else:
-        raise ValueError(
-            f"Generator set to output NOTHING! Check that this is the intended behviour. If so, continue implementation"
-        )
 
 
 def _parse_function_withouth_TF_op(
@@ -335,21 +195,39 @@ def _parse_function_withouth_TF_op(
         Tensor of the label encoded in the TFRecord example
     """
 
+    # REFINED VERSION
+    # key_features = {
+    #     "image": tf.io.FixedLenFeature([], tf.string),
+    #     "gradCAM": tf.io.FixedLenFeature([], tf.string),
+    #     "age": tf.io.FixedLenFeature([], tf.int64),
+    #     "file_name": tf.io.FixedLenFeature([], tf.string),
+    #     "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
+    #     "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
+    #     "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
+    # }
+
+    # TO MATCH TB's DATASET STRUCTURE
     key_features = {
-        "image": tf.io.FixedLenFeature([], tf.string),
-        "gradCAM": tf.io.FixedLenFeature([], tf.string),
-        "age": tf.io.FixedLenFeature([], tf.int64),
-        "file_name": tf.io.FixedLenFeature([], tf.string),
-        "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
-        "label_3_classes": tf.io.FixedLenFeature([], tf.int64),
-        "label_5_classes": tf.io.FixedLenFeature([], tf.int64),
+        "image_data": tf.io.FixedLenFeature([], tf.string),
+        # "gradCAM": tf.io.FixedLenFeature([], tf.string),
+        "age_days": tf.io.FixedLenFeature([], tf.int64),
+        # "file_name": tf.io.FixedLenFeature([], tf.string),
+        # "slice_with_tumor": tf.io.FixedLenFeature([], tf.int64),
+        "image_label_3_classes": tf.io.FixedLenFeature([], tf.int64),
+        "image_label_5_classes": tf.io.FixedLenFeature([], tf.int64),
     }
 
     # take out specified features (key_features) from the example
     parsed_features = tf.io.parse_single_example(proto, key_features)
+
     if return_img:
         # decode image from the example (convert from string of bytes and reshape)
-        image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
+        # # REFINED VERSION
+        # image = tf.io.decode_raw(parsed_features["image"], out_type=tf.float32)
+
+        # TO MATCH TB's DATASET STRUCTURE
+        image = tf.io.decode_raw(parsed_features["image_data"], out_type=tf.float32)
+
         image = tf.reshape(image, shape=input_size)
 
     if return_gradCAM:
@@ -365,15 +243,29 @@ def _parse_function_withouth_TF_op(
 
     # take out the labels
     if any([nbr_classes == 3, nbr_classes == 5]):
+        # # REFINED VERSION
+        # label = (
+        #     tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
+        # )
+
+        # TO MATCH TB's DATASET STRUCTURE
         label = (
-            tf.cast(parsed_features[f"label_{nbr_classes}_classes"], dtype=tf.int32) - 1
+            tf.cast(
+                parsed_features[f"image_label_{nbr_classes}_classes"], dtype=tf.int32
+            )
+            - 1
         )
+
     else:
         label = tf.cast(parsed_features[f"slice_with_tumor"], dtype=tf.int32)
 
     if to_categorical:
         label = tf.cast(tf.one_hot(label, nbr_classes), dtype=tf.float32)
 
+    """
+    This can get messy. In the end we want that the image is a [H, W, ch], where ch=1 if only 
+    the image is returned, ch=2 if image and gradcam is returned and ch=3 if output_as_RGB is True.
+    """
     if all([return_img, return_gradCAM, return_age]):
         # fix number of output channels (usually 3 for pre-trained models on imageNet)
         if output_as_RGB:
@@ -381,7 +273,6 @@ def _parse_function_withouth_TF_op(
         else:
             image = tf.stack([image, gradCAM], axis=-1)
         return {"image": image, "age": age}, {"label": label}
-
     elif all([return_img, return_gradCAM, not return_age]):
         if output_as_RGB:
             image = tf.stack([image, image, gradCAM], axis=-1)
@@ -399,10 +290,12 @@ def _parse_function_withouth_TF_op(
             image = tf.stack([image, image, image], axis=-1)
         else:
             image = tf.expand_dims(image, axis=-1)
-        return {"image": tf.expand_dims(image, axis=-1)}, {"label": label}
+        return {"image": image}, {"label": label}
     elif all([not return_img, return_gradCAM, return_age]):
         if output_as_RGB:
             gradCAM = tf.stack([gradCAM, gradCAM, gradCAM], axis=-1)
+        else:
+            gradCAM = tf.expand_dims(gradCAM, axis=-1)
         return ({"image": gradCAM, "age": age}, {"label": label})
     elif all([not return_img, not return_gradCAM, return_age]):
         return {"age": age}, {"label": label}
@@ -422,86 +315,10 @@ Tha augmentation works as the following
 """
 
 
-def image_normalization(sample, label, image_norm_values: tuple):
-    # @TODO: image and gradcam normalization based on given mean and std
-    # aug_img = sample["image"]
-    # aug_img = tf.math.divide(aug_img, 255)
-    # aug_img = tf.math.multiply(aug_img, 2)
-    # aug_img = tf.math.subtract(aug_img, 1)
-    # sample["image"] = aug_img
-    return sample, label
-
-
-def image_scaling(sample, label):
-    aug_img = sample["image"]
-    aug_img = tf.math.divide(aug_img, 255)
-    aug_img = tf.math.multiply(aug_img, 2)
-    aug_img = tf.math.subtract(aug_img, 1)
-    sample["image"] = aug_img
-    return sample, label
-
-
-def age_normalization(sample, label, age_norm_values: tuple):
-    age = sample["age"]
-    age = tf.math.divide(tf.math.subtract(age, age_norm_values[0]), age_norm_values[1])
-    sample["age"] = age
-    return sample, label
-
-
-def flip(sample, label, random=0.1):
-    # perform random flip with probability random
-    if tf.random.uniform(()) <= random:
-        aug_img = tf.expand_dims(sample["image"], 0)
-        # perform augmentation
-        aug_img = tf.image.flip_left_right(aug_img)
-        # perform augmentation
-        # aug_img = tf.image.flip_up_down(aug_img)
-        # sample["image"] = aug_img
-        sample["image"] = tf.squeeze(aug_img, axis=0)
-
-        return sample, label
-    else:
-        return sample, label
-
-
-def brightness(sample, label, max_delta=0.5, random=0.1):
-    # perform random brightness with probability random
-    if tf.random.uniform(()) <= random:
-        # aug_img = tf.expand_dims(sample["image"], 0)
-        aug_img = sample["image"]
-        print(aug_img.shape)
-        # perform augmentation
-        aug_img = tf.image.random_brightness(aug_img, max_delta=max_delta)
-        # sample["image"] = tf.squeeze(aug_img)
-        sample["image"] = aug_img
-        return sample, label
-    else:
-        return sample, label
-
-
-def rotation(sample, label, random=0.1):
-    # perform random rotation with probability random
-    if tf.random.uniform(()) <= random:
-        aug_img = tf.expand_dims(sample["image"], 0)
-        if tf.random.uniform(()) <= 0.5:
-            aug_img = tf.image.rot90(aug_img, k=1)
-        else:
-            aug_img = tf.image.rot90(aug_img, k=3)
-        sample["image"] = tf.squeeze(aug_img, axis=0)
-        return sample, label
-    else:
-        return sample, label
-
-
 def to_categorical(sample, label, nbr_classes: int = 3):
     return sample, tf.keras.utils.to_categorical(
         label - tf.constant(1, dtype=tf.int64), nbr_classes
     )
-
-
-"""
-Use the above to create the actual data generator
-"""
 
 
 def tfrs_data_generator(
@@ -510,17 +327,9 @@ def tfrs_data_generator(
     dataset_type,
     batch_size,
     buffer_size=5,
-    data_augmentation=True,
     return_img: bool = True,
-    normalize_img: bool = True,
-    scale_image: bool = True,
-    img_norm_values: tuple = None,
-    normalize_gradCAM: bool = True,
-    gradCAM_norm_values: tuple = None,
     return_gradCAM: bool = False,
     return_age: bool = False,
-    normalize_age: bool = False,
-    age_norm_values: tuple = None,
     nbr_classes: int = 3,
     to_categorical: bool = True,
     output_as_RGB: bool = False,
@@ -593,30 +402,6 @@ def tfrs_data_generator(
     if dataset_type == "train":
         dataset = dataset.shuffle(buffer_size=buffer_size)
         dataset = dataset.repeat()
-
-    """ DATA NORMALIZATION """
-    """
-    Note that in the context of teh CBTN dataset, each transveral slice originates
-    from normalized volumes (using min-max normalization with 99.8 percentile values).
-    Thus, normalizing each image again using statistics from the whole dataset is not 
-    desirable. 
-    What is needed, on the other hand, is to scale the values in [-1,1] range. This 
-    depends on which model is used (e.g. EfficientNet does not need rescaling).
-    """
-    if all([return_img, normalize_img]):
-        dataset = dataset.map(image_normalization)
-    elif all([return_img, scale_image]):
-        dataset = dataset.map(image_scaling)
-    if all([normalize_age, age_norm_values]):
-        dataset = dataset.map(
-            lambda x, y: age_normalization(x, y, age_norm_values=age_norm_values)
-        )
-
-    """ DATA AUGMENTATION """
-    if all([dataset_type == "train", data_augmentation == True, return_img]):
-        dataset = dataset.map(rotation)
-        dataset = dataset.map(flip)
-        dataset = dataset.map(brightness)
 
     # This is gust to make the sample weight to work. keep the input features as dict, but labels take out of the dictionary
     if return_age:
@@ -737,85 +522,146 @@ def get_img_file_names(
 
     # work on each dataset type
     if dataset_type.upper() == "BRATS":
-        for modality in kwargs["modalities"]:
-            # specify if to include slices without tumor
-            if kwargs["task"].lower() == "detection":
-                classes = ["slices_without_tumor_label_0", "slices_with_tumor_label_1"]
-            elif kwargs["task"].lower() == "classification":
-                classes = ["slices_with_tumor_label_1"]
+        # for modality in kwargs["modalities"]:
+        #     # specify if to include slices without tumor
+        #     if kwargs["task"].lower() == "detection":
+        #         classes = ["slices_without_tumor_label_0", "slices_with_tumor_label_1"]
+        #     elif kwargs["task"].lower() == "classification":
+        #         classes = ["slices_with_tumor_label_1"]
 
-            for s in classes:
-                files = glob.glob(
-                    os.path.join(img_dataset_path, modality, s, f"*.{file_format}")
-                )
-                if s == "slices_with_tumor_label_1":
-                    # filter files with relative position of the tumor
-                    files = [
-                        (f, int(os.path.basename(f).split("_")[2]))
-                        for f in files
+        #     for s in classes:
+        #         files = glob.glob(
+        #             os.path.join(img_dataset_path, modality, s, f"*.{file_format}")
+        #         )
+        #         if s == "slices_with_tumor_label_1":
+        #             # filter files with relative position of the tumor
+        #             files = [
+        #                 (f, int(os.path.basename(f).split("_")[2]))
+        #                 for f in files
+        #                 if all(
+        #                     [
+        #                         float(os.path.basename(f).split("_")[5])
+        #                         >= kwargs["tumor_min_rpl"],
+        #                         float(os.path.basename(f).split("_")[5])
+        #                         <= kwargs["tumor_max_rpl"],
+        #                     ]
+        #                 )
+        #             ]
+        #         if s == "slices_without_tumor_label_0":
+        #             # filter files with relative position of the tumor within [20, 80]
+        #             files = [
+        #                 (f, int(os.path.basename(f).split("_")[2]))
+        #                 for f in files
+        #                 if all(
+        #                     [
+        #                         float(os.path.basename(f).split("_")[5])
+        #                         >= kwargs["brain_min_rpl"],
+        #                         float(os.path.basename(f).split("_")[5])
+        #                         <= kwargs["brain_max_rpl"],
+        #                     ]
+        #                 )
+        #             ]
+        #         all_file_names.extend(files)
+
+        # BraTS 2021 has all the files in one folder
+        # filter based on the modality (lower_case)
+        for modality in kwargs["modalities"]:
+            files = glob.glob(os.path.join(img_dataset_path, f"*.{file_format}"))
+            files = [f for f in files if modality.lower() in os.path.basename(f)]
+            # filter based on task
+            if kwargs["task"].lower() == "classification":
+                classes = ["label_1"]
+            if kwargs["task"].lower() == "detection":
+                classes = ["label_0", "label_1"]
+            for c in classes:
+                # filter based on the class
+                aus_files = [f for f in files if c in os.path.basename(f)]
+                print(aus_files[0])
+                # filter based on the relative position
+                if c == "label_1":
+                    aus_files = [
+                        (f, int(os.path.basename(f).split("_")[1]))
+                        for f in aus_files
                         if all(
                             [
-                                float(os.path.basename(f).split("_")[5])
+                                float(os.path.basename(f).split("_")[4])
                                 >= kwargs["tumor_min_rpl"],
-                                float(os.path.basename(f).split("_")[5])
+                                float(os.path.basename(f).split("_")[4])
                                 <= kwargs["tumor_max_rpl"],
                             ]
                         )
                     ]
-                if s == "slices_without_tumor_label_0":
-                    # filter files with relative position of the tumor within [20, 80]
-                    files = [
-                        (f, int(os.path.basename(f).split("_")[2]))
-                        for f in files
+                elif c == "label_0":
+                    aus_files = [
+                        (f, int(os.path.basename(f).split("_")[1]))
+                        for f in aus_files
                         if all(
                             [
-                                float(os.path.basename(f).split("_")[5])
+                                float(os.path.basename(f).split("_")[4])
                                 >= kwargs["brain_min_rpl"],
-                                float(os.path.basename(f).split("_")[5])
+                                float(os.path.basename(f).split("_")[4])
                                 <= kwargs["brain_max_rpl"],
                             ]
                         )
                     ]
-                all_file_names.extend(files)
+                all_file_names.extend(aus_files)
 
     if dataset_type.upper() == "CBTN":
         for modality in kwargs["modalities"]:
             # work on the images with tumor
+            # THIS IS FOR THE UPDATED VERSION OF THE DATASET
+
             files = glob.glob(
-                os.path.join(img_dataset_path, modality, f"*label_1.{file_format}")
+                os.path.join(img_dataset_path, modality, f"*.{file_format}")
             )
+
+            # THIS IS FOR TAMARAS DATASET
+            files = glob.glob(
+                os.path.join(img_dataset_path, modality, f"*.{file_format}")
+            )
+
+            # # REFINED DATASET
+            # class_index = 0
+            # subj_index = 2
+            # rlp_index = -3
+            # location_index = 1
+
+            # TO MATCH TB's DATASET STRUCTURE
+            class_index = 0
+            subj_index = 1
+            rlp_index = -1
 
             # filter files with relative position of the tumor
             files = [
-                (f, os.path.basename(f).split("_")[2])
+                (f, os.path.basename(f).split("_")[subj_index])
                 for f in files
                 if all(
                     [
-                        float(os.path.basename(f).split("_")[-3])
+                        float(Path(os.path.basename(f)).stem.split("_")[rlp_index])
                         >= kwargs["tumor_min_rpl"],
-                        float(os.path.basename(f).split("_")[-3])
+                        float(Path(os.path.basename(f)).stem.split("_")[rlp_index])
                         <= kwargs["tumor_max_rpl"],
                     ]
                 )
             ]
             all_file_names.extend(files)
 
-            # filter based on tumor location
-            # find indexes elements
-            to_keep = []
-            to_remove = []
-            for idx, f in enumerate(all_file_names):
-                f_loc = os.path.basename(f[0]).split("_")[1]
-                if any([f_loc == l for l in kwargs["tumor_loc"]]):
-                    # print(f"keeping {os.path.basename(f[0])}")
-                    to_keep.append(idx)
-                else:
-                    # print(f"removing {os.path.basename(f[0])}")
-                    to_remove.append(idx)
+            # # filter based on tumor location
+            # # find indexes elements
+            # to_keep = []
+            # to_remove = []
+            # for idx, f in enumerate(all_file_names):
+            #     f_loc = os.path.basename(f[0]).split("_")[location_index]
+            #     if any([f_loc == l for l in kwargs["tumor_loc"]]):
+            #         # print(f"keeping {os.path.basename(f[0])}")
+            #         to_keep.append(idx)
+            #     else:
+            #         # print(f"removing {os.path.basename(f[0])}")
+            #         to_remove.append(idx)
 
-            # print(f"Keeping {len(to_keep)}, removing {len(to_remove)}")
-            all_file_names = [all_file_names[idx] for idx in to_keep]
-            # print(f"{len(all_file_names)} after filtering")
+            # # print(f"Keeping {len(to_keep)}, removing {len(to_remove)}")
+            # all_file_names = [all_file_names[idx] for idx in to_keep]
+            # # print(f"{len(all_file_names)} after filtering")
 
             # add the files without tumor if detection
             if kwargs["task"].lower() == "detection":
@@ -823,13 +669,13 @@ def get_img_file_names(
                     os.path.join(img_dataset_path, modality, f"*label_0.{file_format}")
                 )
                 files = [
-                    (f, os.path.basename(f).split("_")[2])
+                    (f, os.path.basename(f).split("_")[subj_index])
                     for f in files
                     if all(
                         [
-                            float(os.path.basename(f).split("_")[-3])
+                            float(os.path.basename(f).split("_")[rlp_index])
                             >= kwargs["brain_min_rpl"],
-                            float(os.path.basename(f).split("_")[-3])
+                            float(os.path.basename(f).split("_")[rlp_index])
                             <= kwargs["brain_max_rpl"],
                         ]
                     )
@@ -853,7 +699,7 @@ def get_img_file_names(
                 "MEDULLOBLASTOMA": 2,
             }
             labels = [
-                labels_3_classes[os.path.basename(f[0]).split("_")[0]]
+                labels_3_classes[os.path.basename(f[0]).split("_")[class_index]]
                 for f in all_file_names
             ]
 
@@ -920,10 +766,10 @@ def get_normalization_values(
         age_stats = (age_mean, age_std)
 
     if all([return_gradCAM_norm_values, not return_age_norm_values]):
-        return img_stats, gradCAM_stats
+        return img_stats, gradCAM_stats, None
     elif all([not return_gradCAM_norm_values, return_age_norm_values]):
-        return img_stats, age_stats
+        return img_stats, None, age_stats
     elif all([return_gradCAM_norm_values, return_age_norm_values]):
         return img_stats, gradCAM_stats, age_stats
     else:
-        return img_stats
+        return img_stats, None, None

@@ -64,4 +64,4 @@ class MCC_and_CCE_Loss(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
 
-        return self.mcc_loss(y_true, y_pred) + self.cce_loss(y_true, y_pred)
+        return self.mcc_loss(y_true, y_pred) * 5 + self.cce_loss(y_true, y_pred)

@@ -62,7 +62,7 @@ if not su_debug_flag:
         "--PATH_TO_CBTN_GRADCAMS",
         required=True,
         type=str,
-        help="PAth to the .ny GradCAM files for the CBTN slices",
+        help="Path to the .ny GradCAM files for the CBTN slices",
     )
     parser.add_argument(
         "-s",
@@ -136,7 +136,7 @@ skipped_files = []
 save_non_tumor_slices = True
 saved_idx = 0
 # load image data and gradCAM for each slice
-for idx, f in enumerate(img_and_gradCAM_files[7729::]):
+for idx, f in enumerate(img_and_gradCAM_files):
     print(
         f"Working on {idx+1:{len(str(len(img_and_gradCAM_files)))}d} of {len(img_and_gradCAM_files)} (saved {saved_idx+1}) \r",
         end="",

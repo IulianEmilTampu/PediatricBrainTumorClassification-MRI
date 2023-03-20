@@ -69,28 +69,12 @@ if not su_debug_flag:
         help="Provide the image dataset type (BRATS, CBTN, CUSTOM). This will set the dataloader appropriate for the dataset.",
     )
     parser.add_argument(
-        "-da",
-        "--DATA_AUGMENTATION",
-        required=False,
-        default=True,
-        type=bool,
-        help="Specify if data augmentation should be applied",
-    )
-    parser.add_argument(
         "-dn",
         "--DATA_NORMALIZATION",
         required=False,
         default=True,
         type=bool,
         help="Specify if data normalization should be performed (check pretrained models if they need it)",
-    )
-    parser.add_argument(
-        "-ds",
-        "--DATA_SCALE",
-        required=False,
-        default=False,
-        type=bool,
-        help="Specify if data should be scaled (from [0,255] to [0,1]) (check pretrained models if they need it)",
     )
     parser.add_argument(
         "-gpu",
@@ -148,40 +132,6 @@ if not su_debug_flag:
         help="Number of max training epochs.",
     )
     parser.add_argument(
-        "-use_pretrained",
-        "--USE_PRETRAINED_MODEL",
-        required=False,
-        dest="USE_PRETRAINED_MODEL",
-        type=lambda x: bool(strtobool(x)),
-        help="Specify if the image encoder should be loading the weight pretrained on BraTS",
-    )
-    parser.add_argument(
-        "-path_to_pretrained_model",
-        "--PATH_TO_PRETRAINED_MODEL",
-        required=False,
-        type=str,
-        default=None,
-        help="Specify the path to the pretrained model to use as image encoder.",
-    )
-    parser.add_argument(
-        "-use_age",
-        "--USE_AGE",
-        required=False,
-        dest="USE_AGE",
-        type=lambda x: bool(strtobool(x)),
-        default=False,
-        help="Specify if the model should use the age information. If true, the age information is encoded using a fuly connected model and feature fusion is used to combine image and age infromation.",
-    )
-    parser.add_argument(
-        "-use_gradCAM",
-        "--USE_GRADCAM",
-        required=False,
-        dest="USE_GRADCAM",
-        type=lambda x: bool(strtobool(x)),
-        default=False,
-        help="Specify if the model should use the gradCAM information. If true, the gradCAM infromation is concatenated to the image information as an extra channel",
-    )
-    parser.add_argument(
         "-loss",
         "--LOSS",
         required=False,
@@ -204,15 +154,6 @@ if not su_debug_flag:
         type=float,
         default=1.0,
         help="Specify the percentage of the dataset to use during training and validation. This is for debug",
-    )
-    parser.add_argument(
-        "-trf_data",
-        "--TFR_DATA",
-        required=False,
-        dest="TFR_DATA",
-        type=lambda x: bool(strtobool(x)),
-        default=True,
-        help="Specify if the dataset used for training originates from TFRecord files. This is used to choose between data generators.",
     )
     parser.add_argument(
         "-model_type",
@@ -239,6 +180,14 @@ if not su_debug_flag:
         default=29122009,
         help="Specify random number seed. Useful to have models trained and tested on the same data.",
     )
+    parser.add_argument(
+        "-model_version",
+        "--MODEL_VERSION",
+        required=False,
+        type=str,
+        default="age_to_classes",
+        help="Available model versions: age_to_classes | simple_age_encode | large_age_encoder",
+    )
 
     args_dict = dict(vars(parser.parse_args()))
 
@@ -246,37 +195,27 @@ else:
     # # # # # # # # # # # # # # DEBUG
     args_dict = {
         "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
-        # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
+        "IMG_DATASET_FOLDER": "/run/media/iulta54/GROUP_HD1/Datasets/CBTN/TFR_DATASET/",
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
         "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.0001,
-        "BATCH_SIZE": 32,
+        "OPTIMIZER": "SGD",
+        "LEARNING_RATE": 0.005,
+        "LOSS": "CCE",
+        "BATCH_SIZE": 8,
         "MAX_EPOCHS": 25,
-        "DATA_AUGMENTATION": True,
+        "MODEL_VERSION": "large_age_encoder",
         "DATA_NORMALIZATION": True,
-        "DATA_SCALE": True,
-        "USE_PRETRAINED_MODEL": False,
-        "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
-        "FREEZE_WEIGHTS": True,
-        "USE_AGE": False,
-        "USE_GRADCAM": False,
-        "LOSS": "MCC_and_CCE_Loss",
         "RANDOM_SEED_NUMBER": 20091229,
-        "MR_MODALITIES": ["T2"],
         "DEBUG_DATASET_FRACTION": 1,
-        "TFR_DATA": True,
-        "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "COMPARISON_DS_VERSIONS",
-        "OPTIMIZER": "ADAM",
+        "MODEL_NAME": "Train_on_age_only",
     }
 
 # revise model name
 args_dict[
     "MODEL_NAME"
-] = f'{args_dict["MODEL_NAME"]}_optm_{args_dict["OPTIMIZER"]}_{args_dict["MODEL_TYPE"]}_TFRdata_{args_dict["TFR_DATA"]}_modality_{"_".join([i for i in args_dict["MR_MODALITIES"]])}_loss_{args_dict["LOSS"]}_lr_{args_dict["LEARNING_RATE"]}_batchSize_{args_dict["BATCH_SIZE"]}_pretrained_{args_dict["USE_PRETRAINED_MODEL"]}_frozenWeight_{args_dict["FREEZE_WEIGHTS"]}_useAge_{args_dict["USE_AGE"]}_useGradCAM_{args_dict["USE_GRADCAM"]}_seed_{args_dict["RANDOM_SEED_NUMBER"]}'
+] = f'{args_dict["MODEL_NAME"]}_{args_dict["MODEL_VERSION"]}_optm_normalization_{args_dict["DATA_NORMALIZATION"]}_loss_{args_dict["LOSS"]}_lr_{args_dict["LEARNING_RATE"]}_batchSize_{args_dict["BATCH_SIZE"]}_seed_{args_dict["RANDOM_SEED_NUMBER"]}'
 
 # --------------------------------------
 # set GPU (or device)
@@ -523,113 +462,10 @@ print(
     f"Training files:{len(per_fold_training_files[-1])}\nValidation files: {len(per_fold_validation_files[-1])}"
 )
 
-# %% test generators
-
-look_at_generator = False
-if look_at_generator:
-    # define utilities
-
-    def show_batched_example_tfrs_dataset(
-        dataset,
-        class_names=["0", "1"],
-        nbr_images: int = 1,
-        show_gradCAM: bool = False,
-        show_histogram: bool = False,
-    ):
-        dataset_iterator = iter(dataset)
-        image_batch, label_batch = next(dataset_iterator)
-        print(image_batch["image"].shape)
-        print(
-            f' mean: {np.mean(image_batch["image"]):0.4f}\n std: {np.std(image_batch["image"]):0.4f}'
-        )
-
-        for i in range(nbr_images):
-            fig, ax = plt.subplots(
-                nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5)
-            )
-
-            if show_gradCAM:
-                ax[0].imshow(image_batch["image"][i, :, :, 0], cmap="gray")
-                label = label_batch[i]
-                ax[0].set_title(class_names[label.argmax()])
-                ax[1].imshow(image_batch["image"][i, :, :, 1], cmap="gray")
-            else:
-                ax.imshow(image_batch["image"][i, :, :, 0], cmap="gray")
-                label = label_batch[i]
-                ax.set_title(class_names[label.numpy().argmax()])
-            plt.show(fig)
-
-        if show_histogram:
-            fig, ax = plt.subplots(
-                nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5)
-            )
-            if show_gradCAM:
-                ax[0].hist(
-                    image_batch["image"][:, :, :, 0].numpy().ravel(),
-                )
-                label = label_batch[i]
-                ax[0].set_title("Histogram of image pixel values")
-                ax[1].hist(
-                    image_batch["image"][:, :, :, 1].numpy().ravel(),
-                )
-            else:
-                ax.hist(
-                    image_batch["image"][:, :, :, 0].numpy().ravel(),
-                )
-                label = label_batch[i]
-                ax.set_title("Histogram of image pixel values")
-
-    def show_batched_example(dataset, class_names=["0", "1"], nbr_images: int = 1):
-        image_batch, label_batch = next(iter(dataset))
-
-        plt.figure(figsize=(10, 10))
-        for i in range(nbr_images):
-            plt.imshow(image_batch["image"][i, :, :, 1], cmap="gray")
-            label = label_batch.numpy()[i]
-            plt.title(class_names[label.numpy().argmax()])
-            plt.axis("off")
-
-    importlib.reload(data_utilities)
-    target_size = (224, 224)
-
-    random.shuffle(test_files)
-
-    gen, gen_steps = data_utilities.tfrs_data_generator(
-        file_paths=test_files,
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=1,
-        return_gradCAM=False,
-        return_age=False,
-        dataset_type="test",
-        nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=False,
-    )
-
-    img_stats, gradCAM_stats, age_stats = data_utilities.get_normalization_values(
-        gen, gen_steps, return_age_norm_values=False, return_gradCAM_norm_values=False
-    )
-
-    print(f"Image data (mean+-std): {img_stats}")
-    print(f"gradCAM data (mean+-std): {gradCAM_stats}")
-    print(f"Age data (mean+-std): {age_stats}")
-
-    if Path(test_files[0]).suffix == ".tfrecords":
-        show_batched_example_tfrs_dataset(
-            gen,
-            nbr_images=5,
-            show_gradCAM=False,
-            show_histogram=True,
-            class_names=["ASTR", "EP", "MED"],
-        )
-    else:
-        show_batched_example(gen, nbr_images=5)
-
 # %%
 # ---------
 # RUNIING CROSS VALIDATION TRAINING
 # ---------
-importlib.reload(data_utilities)
 importlib.reload(models)
 
 # save training configuration (right before training to account for the changes made in the meantime)
@@ -651,115 +487,59 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # CREATE DATA GENERATORS
     # -------------------------
 
-    # specify data generator specific for the different types of datasets
-    if args_dict["TFR_DATA"]:
-        data_gen = data_utilities.tfrs_data_generator
-    elif any([args_dict["USE_AGE"], args_dict["USE_GRADCAM"]]):
-        raise ValueError(
-            "Trying to run training using dataset from .jpeg files while asking for age information and/or gradCAM.\nThis is not yet implemented. Use TFR dataset."
-        )
-    else:
-        data_gen = data_utilities.img_data_generator
+    # here get the age information from the file names
+    labels_3_classes = {
+        "ASTROCYTOMA": 0,
+        "EPENDYMOMA": 1,
+        "MEDULLOBLASTOMA": 2,
+    }
+    train_x = [
+        int(os.path.basename(f).split("_")[3][0:-1])
+        for f in per_fold_training_files[cv_f]
+    ]
+    train_y = [
+        labels_3_classes[os.path.basename(f).split("_")[0]]
+        for f in per_fold_training_files[cv_f]
+    ]
 
-    # define generator parameters
-    target_size = (224, 224)
+    val_x = [
+        int(os.path.basename(f).split("_")[3][0:-1])
+        for f in per_fold_validation_files[cv_f]
+    ]
+    val_y = [
+        labels_3_classes[os.path.basename(f).split("_")[0]]
+        for f in per_fold_validation_files[cv_f]
+    ]
 
-    # # ################## TRAINING GENERATOR (get also normalization values)
-    tr_files = per_fold_training_files[cv_f]
-    random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(tr_files)
+    test_x = [int(os.path.basename(f).split("_")[3][0:-1]) for f in test_files]
+    test_y = [labels_3_classes[os.path.basename(f).split("_")[0]] for f in test_files]
 
-    # get norm stat if needed
     if args_dict["DATA_NORMALIZATION"]:
-        train_gen, train_steps = data_gen(
-            file_paths=tr_files[
-                0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
-            ],
-            input_size=target_size,
-            batch_size=args_dict["BATCH_SIZE"],
-            buffer_size=1000,
-            return_gradCAM=args_dict["USE_GRADCAM"],
-            return_age=args_dict["USE_AGE"],
-            dataset_type="test",
-            nbr_classes=args_dict["NBR_CLASSES"],
-        )
+        print(" Normalizing age using train set values.")
+        # get age norm values from the training set
+        mean_age, std_age = np.mean(train_x), np.std(train_x)
+        # normalize values
+        train_x = (train_x - mean_age) / std_age
+        val_x = (val_x - mean_age) / std_age
+        test_x = (test_x - mean_age) / std_age
 
-        # get normalization stats
-        print(f'{" "*6}Getting normalization stats from training generator...')
-        norm_stats = data_utilities.get_normalization_values(
-            train_gen,
-            train_steps,
-            return_age_norm_values=args_dict["USE_AGE"],
-            return_gradCAM_norm_values=args_dict["USE_GRADCAM"],
-        )
-    else:
-        norm_stats = [None, None, None]
+    # make label to categorical
+    train_y = to_categorical(train_y, num_classes=args_dict["NBR_CLASSES"])
+    val_y = to_categorical(val_y, num_classes=args_dict["NBR_CLASSES"])
+    test_y = to_categorical(test_y, num_classes=args_dict["NBR_CLASSES"])
 
-    # build actuall training datagen with normalized values
-    train_gen, train_steps = data_gen(
-        file_paths=tr_files[
-            0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
-        ],
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=3000,
-        return_gradCAM=args_dict["USE_GRADCAM"],
-        return_age=args_dict["USE_AGE"],
-        dataset_type="train",
-        nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
-    )
     print(f'{" "*6}Training gen. done!')
-
-    val_files = per_fold_validation_files[cv_f]
-    random.Random(args_dict["RANDOM_SEED_NUMBER"]).shuffle(val_files)
-    val_gen, val_steps = data_gen(
-        file_paths=val_files[
-            0 : int(len(val_files) * args_dict["DEBUG_DATASET_FRACTION"])
-        ],
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=1000,
-        return_gradCAM=args_dict["USE_GRADCAM"],
-        return_age=args_dict["USE_AGE"],
-        dataset_type="val",
-        nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
-    )
+    train_gen = tf.data.Dataset.from_tensor_slices((train_x, train_y))
+    train_gen = train_gen.shuffle(1000).repeat().batch(args_dict["BATCH_SIZE"])
+    train_steps = len(train_x) // args_dict["BATCH_SIZE"]
     print(f'{" "*6}Validation gen. done!')
-
-    test_gen, test_steps = data_gen(
-        file_paths=test_files,
-        input_size=target_size,
-        batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=10,
-        return_gradCAM=args_dict["USE_GRADCAM"],
-        return_age=args_dict["USE_AGE"],
-        dataset_type="test",
-        nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
-    )
+    val_gen = tf.data.Dataset.from_tensor_slices((val_x, val_y))
+    val_gen = val_gen.batch(args_dict["BATCH_SIZE"])
+    val_steps = len(val_gen) // args_dict["BATCH_SIZE"]
     print(f'{" "*6}Testing gen. done!')
+    test_gen = tf.data.Dataset.from_tensor_slices((test_x, test_y))
+    test_gen = test_gen.batch(args_dict["BATCH_SIZE"])
+    test_steps = len(test_gen) // args_dict["BATCH_SIZE"]
 
     # -------------
     # CREATE MODEL
@@ -767,112 +547,19 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     importlib.reload(models)
     print(f'{" "*3}Building model...')
     # build custom model
-    input_shape = (
-        (target_size[0], target_size[1], 1)
-        if not args_dict["USE_GRADCAM"]
-        else (target_size[0], target_size[1], 2)
+    model = models.age_only_model(
+        args_dict["NBR_CLASSES"], args_dict["MODEL_VERSION"], debug=True
     )
 
-    if args_dict["MODEL_TYPE"] == "SDM4":
-        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-        model = models.SimpleDetectionModel_TF(
-            num_classes=args_dict["NBR_CLASSES"],
-            input_shape=input_shape,
-            image_normalization_stats=norm_stats[0],
-            scale_image=args_dict["DATA_SCALE"],
-            data_augmentation=args_dict["DATA_AUGMENTATION"],
-            kernel_size=(3, 3),
-            pool_size=(2, 2),
-            use_age=args_dict["USE_AGE"],
-            age_normalization_stats=norm_stats[2],
-            use_age_thr_tabular_network=False,
-            use_pretrained=args_dict["USE_PRETRAINED_MODEL"],
-            pretrained_model_path=args_dict["PATH_TO_PRETRAINED_MODEL"],
-            freeze_weights=args_dict["FREEZE_WEIGHTS"],
-        )
-
-    elif args_dict["MODEL_TYPE"] == "ResNet9":
-        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-        model = models.ResNet9(
-            num_classes=args_dict["NBR_CLASSES"],
-            input_shape=input_shape,
-            use_age=args_dict["USE_AGE"],
-            use_age_thr_tabular_network=False,
-        )
-    elif args_dict["MODEL_TYPE"] == "ViT":
-        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-        model = models.ViT(
-            input_size=input_shape,
-            num_classes=args_dict["NBR_CLASSES"],
-            use_age=args_dict["USE_AGE"],
-            use_age_thr_tabular_network=False,
-            use_gradCAM=args_dict["USE_GRADCAM"],
-            patch_size=16,
-            projection_dim=64,
-            num_heads=8,
-            mlp_head_units=(256, 128),
-            transformer_layers=8,
-            transformer_units=None,
-            debug=False,
-        )
-    elif args_dict["MODEL_TYPE"] == "EfficientNet":
-        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-        model = models.EfficientNet(
-            num_classes=args_dict["NBR_CLASSES"],
-            input_shape=(input_shape[0], input_shape[1], 3),
-            use_age=args_dict["USE_AGE"],
-            use_age_thr_tabular_network=False,
-            pretrained=args_dict["USE_PRETRAINED_MODEL"],
-            freeze_weights=args_dict["FREEZE_WEIGTH"],
-        )
-    elif args_dict["MODEL_TYPE"] == "ResNet50":
-        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
-        model = models.ResNet50(
-            num_classes=args_dict["NBR_CLASSES"],
-            input_shape=(input_shape[0], input_shape[1], 3),
-            use_age=args_dict["USE_AGE"],
-            use_age_thr_tabular_network=False,
-            pretrained=args_dict["USE_PRETRAINED_MODEL"],
-            freeze_weights=args_dict["FREEZE_WEIGTH"],
-        )
-    else:
-        raise ValueError(
-            "Model type not among the ones that are implemented.\nDefine model in the models.py file and add code here for building the model."
-        )
-
     # ################################# COMPILE MODEL
-    # learning_rate_fn = tf.keras.optimizers.schedules.PolynomialDecay(
-    #     args_dict["LEARNING_RATE"], args_dict["MAX_EPOCHS"], 0, power=0.99
-    # )
-
-    # values obtained using the LRFind callback
     learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-        initial_learning_rate=1e-3,
-        maximal_learning_rate=1e-1,
+        initial_learning_rate=1e-2,
+        maximal_learning_rate=1e-0
+        if args_dict["MODEL_VERSION"] == "age_to_classes"
+        else 1e-1,
         scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
         step_size=2 * train_steps,
     )
-    # plot learning rate
-    if isinstance(
-        learning_rate_fn, tfa.optimizers.cyclical_learning_rate.CyclicalLearningRate
-    ):
-        fig = plt.figure()
-        step = np.arange(0, args_dict["MAX_EPOCHS"] * train_steps)
-        lr = learning_rate_fn(step)
-        ax1 = fig.add_subplot(111)
-        ax2 = ax1.twiny()
-        ax1.plot(step, lr)
-        ax1.set_xlabel("Steps")
-        ax1.set_ylabel("Learning Rate")
-        ax2.set_xlim(ax1.get_xlim())
-        ax2.set_xticks([i * train_steps for i in range(args_dict["MAX_EPOCHS"])])
-        ax2.set_xticklabels([i for i in range(args_dict["MAX_EPOCHS"])])
-        ax2.set_xlabel("Epochs")
-        # save figure
-        fig.savefig(
-            os.path.join(os.path.dirname(save_model_path), "learning_rate_curve.png")
-        )
-        plt.close(fig)
 
     if args_dict["OPTIMIZER"] == "SGD":
         print(f'{" "*6}Using SGD optimizer.')
@@ -890,15 +577,15 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     elif args_dict["OPTIMIZER"] == "ADAM":
         print(f'{" "*6}Using AdamW optimizer.')
 
-        # optimizer = tfa.optimizers.AdamW(
-        #     learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
-        # )
         optimizer = tfa.optimizers.AdamW(
-            learning_rate=learning_rate_fn, weight_decay=0.0001
+            learning_rate=args_dict["LEARNING_RATE"], weight_decay=0.0001
         )
+        # optimizer = tfa.optimizers.AdamW(
+        #     learning_rate=learning_rate_fn, weight_decay=0.0001
+        # )
 
     # wrap using LookAhead which helps smoothing out validation curves
-    optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
+    # optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
 
     if args_dict["LOSS"] == "MCC":
         print(f'{" "*6}Using MCC loss.')
@@ -951,20 +638,11 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     best_model_path = os.path.join(save_model_path, "best_model_weights", "")
     Path(best_model_path).mkdir(parents=True, exist_ok=True)
 
-    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-        filepath=best_model_path,
-        save_weights_only=True,
-        monitor="val_loss",
-        mode="min",
-        save_best_only=True,
-    )
-
     importlib.reload(tf_callbacks)
     callbacks_list = [
         tf_callbacks.SaveBestModelWeights(
             save_path=best_model_path, monitor="val_loss", mode="min"
         ),
-        # model_checkpoint_callback,
         tf_callbacks.LossAndErrorPrintingCallback(
             save_path=save_model_path, print_every_n_epoch=5
         ),
@@ -1083,27 +761,21 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                     subj_files = [
                         f for f in test_files if test_subject[0] in os.path.basename(f)
                     ]
+
+                    t_x = [
+                        int(os.path.basename(f).split("_")[3][0:-1]) for f in subj_files
+                    ]
+                    t_x = (t_x - mean_age) / std_age
+                    t_y = [
+                        labels_3_classes[os.path.basename(f).split("_")[0]]
+                        for f in subj_files
+                    ]
+                    t_y = to_categorical(t_y, num_classes=args_dict["NBR_CLASSES"])
                     # build generator
-                    test_gen, test_steps = data_utilities.tfrs_data_generator(
-                        file_paths=subj_files,
-                        input_size=target_size,
-                        batch_size=len(subj_files),
-                        buffer_size=1,
-                        return_gradCAM=args_dict["USE_GRADCAM"],
-                        return_age=args_dict["USE_AGE"],
-                        dataset_type="test",
-                        nbr_classes=args_dict["NBR_CLASSES"],
-                        output_as_RGB=True
-                        if any(
-                            [
-                                args_dict["MODEL_TYPE"] == "EfficientNet",
-                                args_dict["MODEL_TYPE"] == "ResNet50",
-                            ]
-                        )
-                        else False,
-                    )
+                    t_gen = tf.data.Dataset.from_tensor_slices((t_x, t_y))
+                    t_gen = t_gen.batch(1)
                     # predict cases
-                    pred = model.predict(test_gen, verbose=0)
+                    pred = model.predict(t_gen, verbose=0)
                     # compute aggregated prediction (not weighted)
                     MAP_pred.append(pred.mean(axis=0).argmax())
                     vals, counts = np.unique(pred.argmax(axis=1), return_counts=True)

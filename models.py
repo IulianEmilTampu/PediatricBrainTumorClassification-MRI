@@ -31,23 +31,54 @@ import tensorflow_addons as tfa
 def EfficientNet(
     num_classes: int,
     input_shape: Union[list, tuple],
+    data_augmentation: bool = True,
+    scale_image: bool = True,
+    image_normalization_stats: tuple = None,
     use_age: bool = False,
     use_age_thr_tabular_network: bool = False,
     debug: bool = False,
     pretrained: bool = True,
-    froze_weights: bool = False,
+    freeze_weights: bool = False,
 ):
     """
     Make sure not to use the functional API if not you get a
     nested model from which is difficult to get the GradCam
     """
 
-    denseRegularizer = "L2"
-    denseConstrain = None
-    denseActivation = None
     denseDropoutRate = 0.8
 
+    # building  model
     img_input = Input(shape=input_shape, name="image")
+    x = img_input
+
+    # normalize of scale the image
+    if image_normalization_stats:
+        # apply image normalization with given mean and variance
+        x = tf.keras.layers.Normalization(
+            mean=image_normalization_stats[0], variance=image_normalization_stats[1]
+        )(x)
+    elif scale_image:
+        x = tf.keras.layers.Rescaling(scale=1 / 127.5, offset=-1)(x)
+
+    # data augmentation
+    if data_augmentation:
+        x = tf.keras.layers.RandomFlip(mode="horizontal_and_vertical")(x)
+        x = tf.keras.layers.RandomRotation(
+            factor=0.25, fill_mode="nearest", interpolation="bilinear"
+        )(x)
+        x = tf.keras.layers.RandomZoom(
+            height_factor=0.2,
+            width_factor=0.2,
+            fill_mode="nearest",
+            interpolation="bilinear",
+        )(x)
+        x = tf.keras.layers.RandomTranslation(
+            height_factor=0.2,
+            width_factor=0.2,
+            fill_mode="nearest",
+            interpolation="bilinear",
+        )(x)
+        x = tf.keras.layers.RandomContrast(factor=0.2)(x)
 
     # use EfficientNet from keras as feature extractor
     efficientNet = tf.keras.applications.efficientnet_v2.EfficientNetV2B0(
@@ -58,7 +89,7 @@ def EfficientNet(
     )
 
     # froze model layers
-    if froze_weights:
+    if freeze_weights:
         efficientNet.trainable = False
 
     # build model
@@ -116,7 +147,7 @@ def ResNet50(
     use_age_thr_tabular_network: bool = False,
     debug: bool = False,
     pretrained: bool = True,
-    froze_weights: bool = False,
+    freeze_weights: bool = False,
 ):
     """
     Make sure not to use the functional API if not you get a
@@ -140,7 +171,7 @@ def ResNet50(
     )
 
     # froze model layers
-    if froze_weights:
+    if freeze_weights:
         resnet50.trainable = False
 
     # build model
@@ -192,12 +223,18 @@ def ResNet50(
 def SimpleDetectionModel_TF(
     num_classes: int,
     input_shape: Union[list, tuple],
+    data_augmentation: bool = True,
+    scale_image: bool = True,
+    image_normalization_stats: tuple = None,
     kernel_size: Union[list, tuple] = (3, 3),
     pool_size: Union[list, tuple] = (2, 2),
     use_age: bool = False,
+    age_normalization_stats: tuple = None,
     use_age_thr_tabular_network: bool = False,
-    use_gradCAM: bool = False,
     debug: bool = False,
+    use_pretrained: bool = False,
+    pretrained_model_path: str = None,
+    freeze_weights: bool = True,
 ):
 
     convRegularizer = tf.keras.regularizers.l2(l=0.00001)
@@ -213,35 +250,74 @@ def SimpleDetectionModel_TF(
     denseDropoutRate = 0.2
 
     # building  model
-    img_input = Input(shape=input_shape, name="image")
+    if use_pretrained:
+        print("Using pre-trained model weights. Using the image encoder weights only.")
+        pre_t_model = tf.keras.models.load_model(pretrained_model_path, compile=False)
+        img_input = pre_t_model.inputs
+        x = pre_t_model.layers[-6].output
 
-    x = img_input
-    for nbr_filter in [64, 128, 256, 512]:
-        x = Conv2D(
-            filters=nbr_filter,
-            kernel_size=kernel_size,
-            activation=convActivation,
-            padding="same",
-            kernel_regularizer=convRegularizer,
-        )(x)
-        x = tfa.layers.InstanceNormalization()(x)
-        x = tf.keras.layers.LeakyReLU(
-            alpha=0.3,
-        )(x)
-        x = Conv2D(
-            filters=nbr_filter,
-            kernel_size=kernel_size,
-            activation=convActivation,
-            padding="same",
-            kernel_regularizer=convRegularizer,
-            kernel_constraint=convConstrain,
-        )(x)
-        x = tfa.layers.InstanceNormalization()(x)
-        x = tf.keras.layers.LeakyReLU(
-            alpha=0.3,
-        )(x)
-        x = MaxPooling2D(pool_size=pool_size)(x)
-        x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
+        if freeze_weights:
+            pre_t_model.trainable = False
+
+    else:
+        img_input = Input(shape=input_shape, name="image")
+        x = img_input
+
+        # normalize of scale the image
+        if image_normalization_stats:
+            # apply image normalization with given mean and variance
+            x = tf.keras.layers.Normalization(
+                mean=image_normalization_stats[0], variance=image_normalization_stats[1]
+            )(x)
+        elif scale_image:
+            x = tf.keras.layers.Rescaling(scale=1 / 127.5, offset=-1)(x)
+
+        # data augmentation
+        if data_augmentation:
+            x = tf.keras.layers.RandomFlip(mode="horizontal_and_vertical")(x)
+            x = tf.keras.layers.RandomRotation(
+                factor=0.25, fill_mode="nearest", interpolation="bilinear"
+            )(x)
+            x = tf.keras.layers.RandomZoom(
+                height_factor=0.2,
+                width_factor=0.2,
+                fill_mode="nearest",
+                interpolation="bilinear",
+            )(x)
+            x = tf.keras.layers.RandomTranslation(
+                height_factor=0.2,
+                width_factor=0.2,
+                fill_mode="nearest",
+                interpolation="bilinear",
+            )(x)
+            x = tf.keras.layers.RandomContrast(factor=0.2)(x)
+
+        for nbr_filter in [64, 128, 256, 512]:
+            x = Conv2D(
+                filters=nbr_filter,
+                kernel_size=kernel_size,
+                activation=convActivation,
+                padding="same",
+                kernel_regularizer=convRegularizer,
+            )(x)
+            x = tfa.layers.InstanceNormalization()(x)
+            x = tf.keras.layers.LeakyReLU(
+                alpha=0.3,
+            )(x)
+            x = Conv2D(
+                filters=nbr_filter,
+                kernel_size=kernel_size,
+                activation=convActivation,
+                padding="same",
+                kernel_regularizer=convRegularizer,
+                kernel_constraint=convConstrain,
+            )(x)
+            x = tfa.layers.InstanceNormalization()(x)
+            x = tf.keras.layers.LeakyReLU(
+                alpha=0.3,
+            )(x)
+            x = MaxPooling2D(pool_size=pool_size)(x)
+            x = tf.keras.layers.SpatialDropout2D(rate=convDropoutRate)(x)
 
     # classifier
     x = GlobalAveragePooling2D()(x)
@@ -266,6 +342,10 @@ def SimpleDetectionModel_TF(
         # else:
         age_input = Input(shape=(1,), name="age")
         enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
+        if age_normalization_stats:
+            enc_age = tf.keras.layers.Normalization(
+                mean=age_normalization_stats[0], variance=age_normalization_stats[1]
+            )(enc_age)
         x = tf.keras.layers.concatenate([x, enc_age])
 
     output = Dense(
@@ -854,4 +934,53 @@ def ViT_2(
     if debug is True:
         print(model.summary())
 
+    return model
+
+
+# %% ############################ AGE ONLY MODELS
+
+
+def age_only_model(
+    num_classes: int,
+    model_version: str = "age_to_classes",
+    debug: bool = False,
+):
+    denseRegularizer = "L2"
+    denseConstrain = None
+
+    # building  model
+    age_input = Input(shape=[1], name="image")
+    x = age_input
+
+    if model_version != "age_to_classes":
+        if model_version == "simple_age_encoder":
+            layer_specs = [num_classes]
+        elif model_version == "large_age_encoder":
+            layer_specs = [8, 16, 32]
+        # build model based on layer_specs
+        for nodes in layer_specs:
+            x = Dense(
+                units=nodes,
+                activation=None,
+                kernel_regularizer=denseRegularizer,
+                kernel_constraint=denseConstrain,
+            )(x)
+
+            x = tfa.layers.InstanceNormalization()(x)
+            x = tf.keras.layers.LeakyReLU(
+                alpha=0.3,
+            )(x)
+
+    output = Dense(
+        units=num_classes,
+        activation="softmax",
+        name="label",
+    )(x)
+
+    model = tf.keras.Model(inputs=age_input, outputs=output)
+
+    # print model if needed
+    if debug is True:
+        print(model.summary())
+    print(model.summary())
     return model

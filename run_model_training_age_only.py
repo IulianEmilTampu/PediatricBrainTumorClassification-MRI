@@ -524,15 +524,15 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     print(f'{" "*6}Training gen. done!')
     train_gen = tf.data.Dataset.from_tensor_slices((train_x, train_y))
     train_gen = train_gen.shuffle(1000).repeat().batch(args_dict["BATCH_SIZE"])
-    train_steps = len(train_x) // args_dict["BATCH_SIZE"]
+    train_steps = np.ceil(len(train_x) / args_dict["BATCH_SIZE"])
     print(f'{" "*6}Validation gen. done!')
     val_gen = tf.data.Dataset.from_tensor_slices((val_x, val_y))
     val_gen = val_gen.batch(args_dict["BATCH_SIZE"])
-    val_steps = len(val_gen) // args_dict["BATCH_SIZE"]
+    val_steps = np.ceil(len(val_gen) / args_dict["BATCH_SIZE"])
     print(f'{" "*6}Testing gen. done!')
     test_gen = tf.data.Dataset.from_tensor_slices((test_x, test_y))
     test_gen = test_gen.batch(args_dict["BATCH_SIZE"])
-    test_steps = len(test_gen) // args_dict["BATCH_SIZE"]
+    test_steps = np.ceil(len(test_gen) / args_dict["BATCH_SIZE"])
 
     # -------------
     # CREATE MODEL

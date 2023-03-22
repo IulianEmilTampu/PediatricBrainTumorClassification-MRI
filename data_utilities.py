@@ -432,7 +432,8 @@ def tfrs_data_generator(
         dataset = dataset.prefetch(buffer_size)
 
     # return the number of steps for this dataset
-    dataset_steps = np.ceil(len(file_paths) / batch_size)
+    # dataset_steps = int(np.ceil(len(file_paths) / batch_size))
+    dataset_steps = len(file_paths) // batch_size
 
     return dataset, dataset_steps
 

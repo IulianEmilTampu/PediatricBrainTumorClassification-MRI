@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = True
+su_debug_flag = False
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -164,6 +164,15 @@ if not su_debug_flag:
         help="Specify the path to the pretrained model to use as image encoder.",
     )
     parser.add_argument(
+        "-freeze_weights",
+        "--FREEZE_WEIGHTS",
+        required=False,
+        dest="FREEZE_WEIGHTS",
+        type=lambda x: bool(strtobool(x)),
+        default=True,
+        help="Specify if pretrained model weights should be frozen.",
+    )
+    parser.add_argument(
         "-use_age",
         "--USE_AGE",
         required=False,
@@ -272,7 +281,7 @@ else:
         "NBR_FOLDS": 1,
         "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 25,
+        "MAX_EPOCHS": 2,
         "DATA_AUGMENTATION": True,
         "DATA_NORMALIZATION": True,
         "DATA_SCALE": True,
@@ -281,7 +290,7 @@ else:
         "FREEZE_WEIGHTS": True,
         "USE_AGE": True,
         "AGE_NORMALIZATION": True,
-        "AGE_ENCODER_VERSION": "no_encoder",
+        "AGE_ENCODER_VERSION": "simple_age_encoder",
         "USE_GRADCAM": False,
         "LOSS": "MCC_and_CCE_Loss",
         "RANDOM_SEED_NUMBER": 1111,
@@ -289,14 +298,14 @@ else:
         "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TEST_age_encoders",
+        "MODEL_NAME": "TTTTTTTTTT",
         "OPTIMIZER": "ADAM",
     }
 
 # revise model name
 args_dict[
     "MODEL_NAME"
-] = f'{args_dict["MODEL_NAME"]}_optm_{args_dict["OPTIMIZER"]}_{args_dict["MODEL_TYPE"]}_TFRdata_{args_dict["TFR_DATA"]}_modality_{"_".join([i for i in args_dict["MR_MODALITIES"]])}_loss_{args_dict["LOSS"]}_lr_{args_dict["LEARNING_RATE"]}_batchSize_{args_dict["BATCH_SIZE"]}_pretrained_{args_dict["USE_PRETRAINED_MODEL"]}_frozenWeight_{args_dict["FREEZE_WEIGHTS"]}_useAge_{args_dict["USE_AGE"]}_useGradCAM_{args_dict["USE_GRADCAM"]}_seed_{args_dict["RANDOM_SEED_NUMBER"]}'
+] = f'{args_dict["MODEL_NAME"]}_optm_{args_dict["OPTIMIZER"]}_{args_dict["MODEL_TYPE"]}_TFRdata_{args_dict["TFR_DATA"]}_modality_{"_".join([i for i in args_dict["MR_MODALITIES"]])}_loss_{args_dict["LOSS"]}_lr_{args_dict["LEARNING_RATE"]}_batchSize_{args_dict["BATCH_SIZE"]}_pretrained_{args_dict["USE_PRETRAINED_MODEL"]}_frozenWeight_{args_dict["FREEZE_WEIGHTS"]}_useAge_{args_dict["USE_AGE"]}_{args_dict["AGE_ENCODER_VERSION"]}_useGradCAM_{args_dict["USE_GRADCAM"]}_seed_{args_dict["RANDOM_SEED_NUMBER"]}'
 
 # --------------------------------------
 # set GPU (or device)
@@ -735,6 +744,10 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         )
         else False,
     )
+    # plot also histogram of values
+    data_utilities.plot_tfr_dataset_intensity_dist(
+        train_gen, train_steps, plot_name="Train_data", save_path=save_model_path
+    )
     print(f'{" "*6}Training gen. done!')
 
     val_files = per_fold_validation_files[cv_f]
@@ -759,6 +772,10 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         )
         else False,
     )
+    # plot also histogram of values
+    data_utilities.plot_tfr_dataset_intensity_dist(
+        val_gen, val_steps, plot_name="Validation_data", save_path=save_model_path
+    )
     print(f'{" "*6}Validation gen. done!')
 
     test_gen, test_steps = data_gen(
@@ -778,6 +795,10 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             ]
         )
         else False,
+    )
+    # plot also histogram of values
+    data_utilities.plot_tfr_dataset_intensity_dist(
+        test_gen, test_steps, plot_name="Test_data", save_path=save_model_path
     )
     print(f'{" "*6}Testing gen. done!')
 
@@ -870,14 +891,14 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
 
     # values obtained using the LRFind callback
 
-    # learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-    #     initial_learning_rate=1e-3,
-    #     maximal_learning_rate=1e-1,
-    #     scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
-    #     step_size=2 * train_steps,
-    # )
+    learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
+        initial_learning_rate=1e-3,
+        maximal_learning_rate=1e-1,
+        scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
+        step_size=2 * train_steps,
+    )
 
-    learning_rate_fn = None
+    # learning_rate_fn = None
 
     # plot learning rate
     if isinstance(
@@ -996,6 +1017,16 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         ),
     ]
 
+    # save training configuration (right before training to account for the changes made in the meantime)
+    args_dict["OPTIMIZER"] = str(type(optimizer))
+    args_dict["LOSS_TYPE"] = str(type(loss))
+    args_dict["LEARNING_SCHEDULER"] = str(
+        (type(learning_rate_fn) if learning_rate_fn else "constant")
+    )
+
+    with open(os.path.join(args_dict["SAVE_PATH"], "config.json"), "w") as config_file:
+        config_file.write(json.dumps(args_dict))
+
     # ------------------
     # RUN MODEL TRAINING
     # ------------------
@@ -1022,12 +1053,20 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # MODEL EVALUATION
     # ------------------
     importlib.reload(utilities)
+    # try to delete the model and then reload it
+    del model
     """
     Here evaluate last and best models on both the validation data and the test data
     """
     for m in ["last", "best"]:
         if m == "best":
-            model.load_weights(os.path.join(best_model_path, "best_model"))
+            loaded_model = tf.keras.models.load_model(
+                os.path.join(best_model_path, "best_model")
+            )
+        else:
+            loaded_model = tf.keras.models.load_model(
+                os.path.join(last_model_path, "last_model")
+            )
         for data_gen, data_gen_steps, dataset_name in zip(
             [test_gen, val_gen], [test_steps, val_steps], ["test", "validation"]
         ):
@@ -1040,7 +1079,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             for i in range(ds_steps):
                 x, y = next(ds_iter)
                 Ytest_categorical.append(y)
-                Ptest_softmax.append(model.predict(x, verbose=0))
+                Ptest_softmax.append(loaded_model.predict(x, verbose=0))
             Ptest_softmax = np.row_stack(Ptest_softmax)
 
             Ptest = np.argmax(Ptest_softmax, axis=-1)
@@ -1129,7 +1168,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                         else False,
                     )
                     # predict cases
-                    pred = model.predict(test_gen, verbose=0)
+                    pred = loaded_model.predict(test_gen, verbose=0)
                     # compute aggregated prediction (not weighted)
                     MAP_pred.append(pred.mean(axis=0).argmax())
                     vals, counts = np.unique(pred.argmax(axis=1), return_counts=True)
@@ -1179,6 +1218,8 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
                         saveName=f"CM_{m}_model_{dataset_name}_{pred_name}",
                         draw=False,
                     )
+
+        del loaded_model
 
     # ## SAVE FINAL CURVES
     print(f'{" "*6}Saving training curves and tabular evaluation data...')
@@ -1270,6 +1311,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     writer.writerows(csv_rows)
     csv_file.close()
     print(f'{" "*6}Done! To the next fold.')
+
 ## SAVE SUMMARY FOR ALL THE FOLDS IN ONE FILE
 summary_file = os.path.join(args_dict["SAVE_PATH"], f"tabular_test_summary.csv")
 csv_file = open(summary_file, "w")

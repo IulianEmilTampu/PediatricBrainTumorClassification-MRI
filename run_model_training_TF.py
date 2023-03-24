@@ -37,7 +37,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = False
+su_debug_flag = True
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -271,9 +271,40 @@ if not su_debug_flag:
 
 else:
     # # # # # # # # # # # # # # DEBUG
+    # args_dict = {
+    #     "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
+    #     "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+    #     # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
+    #     "DATASET_TYPE": "CBTN",
+    #     "NBR_CLASSES": 3,
+    #     "GPU_NBR": "0",
+    #     "NBR_FOLDS": 1,
+    #     "LEARNING_RATE": 0.0001,
+    #     "BATCH_SIZE": 32,
+    #     "MAX_EPOCHS": 2,
+    #     "DATA_AUGMENTATION": True,
+    #     "DATA_NORMALIZATION": True,
+    #     "DATA_SCALE": True,
+    #     "USE_PRETRAINED_MODEL": False,
+    #     "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
+    #     "FREEZE_WEIGHTS": True,
+    #     "USE_AGE": True,
+    #     "AGE_NORMALIZATION": True,
+    #     "AGE_ENCODER_VERSION": "simple_age_encoder",
+    #     "USE_GRADCAM": False,
+    #     "LOSS": "MCC_and_CCE_Loss",
+    #     "RANDOM_SEED_NUMBER": 1111,
+    #     "MR_MODALITIES": ["T2"],
+    #     "DEBUG_DATASET_FRACTION": 1,
+    #     "TFR_DATA": True,
+    #     "MODEL_TYPE": "SDM4",
+    #     "MODEL_NAME": "TTTTTTTTTT",
+    #     "OPTIMIZER": "ADAM",
+    # }
+
     args_dict = {
-        "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+        "WORKING_FOLDER": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification",
+        "IMG_DATASET_FOLDER": r"C:\Datasets\CBTN\EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
         # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
         "DATASET_TYPE": "CBTN",
         "NBR_CLASSES": 3,
@@ -730,7 +761,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         ],
         input_size=target_size,
         batch_size=args_dict["BATCH_SIZE"],
-        buffer_size=3000,
+        buffer_size=500,
         return_gradCAM=args_dict["USE_GRADCAM"],
         return_age=args_dict["USE_AGE"],
         dataset_type="train",
@@ -986,13 +1017,16 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     )
 
     # print model architecture
-    tf.keras.utils.plot_model(
-        model,
-        to_file=os.path.join(save_model_path, "model_architecture.jpeg"),
-        show_shapes=True,
-        show_layer_activations=True,
-        expand_nested=True,
-    )
+    try:
+        tf.keras.utils.plot_model(
+            model,
+            to_file=os.path.join(save_model_path, "model_architecture.jpeg"),
+            show_shapes=True,
+            show_layer_activations=True,
+            expand_nested=True,
+        )
+    except:
+        print("Failed to plot model architecture.")
 
     # ######################### SET MODEL CHECKPOINT
     best_model_path = os.path.join(save_model_path, "best_model_weights", "")

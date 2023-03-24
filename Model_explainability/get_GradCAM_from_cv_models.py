@@ -328,10 +328,10 @@ else:
     # # # # # # # # # # # # # # DEBUG
     print("Running in debug mode.")
     args_dict = {
-        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Detection_infra_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
+        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Round_4/Classification_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_1111",
+        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320/T2",
         "ANNOTATION_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES/T2",
-        "NBR_IMG_TO_PROCESS": 3,
+        "NBR_IMG_TO_PROCESS": 100,
         "GPU": "0",
     }
 
@@ -347,6 +347,7 @@ import warnings
 tf.get_logger().setLevel(logging.ERROR)
 from tensorflow.keras.utils import to_categorical
 import tensorflow.keras.layers as layers
+import tensorflow_addons as tfa
 import keras
 
 devices = tf.config.list_physical_devices("GPU")
@@ -395,66 +396,73 @@ with open(
         "train_val_test_files.json",
     )
 ) as file:
-    config = json.load(file)
+    train_val_test_files = json.load(file)
     img_files = [
-        os.path.join(args_dict["IMG_DATASET_FOLDER"], f"{Path(f).stem}.png")
-        for f in config["test"]
-    ]
-    # remove infra supra from the file name (not in the .png images)
-    aus_img_files = []
-    img_files = [
-        os.path.join(
-            os.path.dirname(f),
-            "_".join(
-                [
-                    os.path.basename(f).split("_")[i]
-                    for i in range(len(os.path.basename(f).split("_")))
-                    if i != 1
-                ]
-            ),
-        )
-        for f in img_files
+        os.path.join(args_dict["IMG_DATASET_FOLDER"], f)
+        for f in train_val_test_files["test"]
     ]
 
     # remove images that are not available
     # img_files = [f for f in img_files if os.path.isfile(f)]
     # only take args_dict['NBR_IMG_TO_PROCESS'] random images
     random.shuffle(img_files)
-    # just for debug take images that have tumor
-    img_files = [f for f in img_files if "label_1" in os.path.basename(f)]
     img_files = img_files[0 : args_dict["NBR_IMG_TO_PROCESS"]]
 
-# ###################
-# use all the images in the given dataset path
-# img_files = glob.glob(os.path.join(args_dict["IMG_DATASET_FOLDER"], "*.png"))
-# remove annotation files
-# img_files = [f for f in img_files if "annotation" not in os.path.basename(f)]
-# ###################
+# open also the configuration file
+with open(os.path.join(args_dict["PATH_TO_MODELS"], "config.json")) as file:
+    config = json.load(file)
 
 target_size = (224, 224)
-img_gen = data_utilities.img_data_generator(
-    sample_files=img_files,
-    target_size=target_size,
+# img_gen = data_utilities.img_data_generator(
+#     sample_files=img_files,
+#     target_size=target_size,
+#     batch_size=1,
+#     dataset_type="testing",
+#     normalize_img=False,
+# )
+
+target_size = (224, 224)
+img_gen, img_gen_steps = data_utilities.tfrs_data_generator(
+    file_paths=img_files,
+    input_size=target_size,
     batch_size=1,
-    dataset_type="testing",
-    normalize_img=False,
+    buffer_size=10,
+    return_gradCAM=config["USE_GRADCAM"],
+    return_age=config["USE_AGE"],
+    dataset_type="test",
+    nbr_classes=config["NBR_CLASSES"],
+    output_as_RGB=True
+    if any(
+        [
+            config["MODEL_TYPE"] == "EfficientNet",
+            config["MODEL_TYPE"] == "ResNet50",
+        ]
+    )
+    else False,
 )
 
 # build dictionary where the images to work on are located
 IMAGES = {}
 
-for idx, ((x, y), f) in enumerate(zip(img_gen, img_gen.filenames)):
-    IMAGES[idx] = {"image_file_name": f, "image": x, "label": y[0]}
-    # if the label is 1 (there is tumor) get the annotation file name and load the annotation
-    if y[0].argmax() == 1:
+for idx, ((x, y), f) in enumerate(zip(img_gen, img_files)):
+    IMAGES[idx] = {
+        "image_file_name": f,
+        "image": x["image"].numpy(),
+        "label": y[0].numpy(),
+    }
+    try:
         # get annotation file
 
-        # BRATS VERSION
-        # annotation_file = f"{'_'.join(Path(f).stem.split('_')[0:3])}_{'_'.join(Path(f).stem.split('_')[4::])}_annotation.jpeg"
+        # CBTN VERSION (from merged files. This looks messy, but works)
+        tumor_type = Path(f).stem.split("_")[0]
+        subj_ID = "_".join(Path(f).stem.split("_")[2:7])
+        rlp = float(Path(f).stem.split("_")[-3])
 
-        # CBTN VERSION
-        annotation_file = f"_".join([Path(f).stem, "annotation.png"])
-
+        # build annotation file name
+        annotation_file = (
+            "_".join([tumor_type, subj_ID, "rlp", f"{rlp:.01f}", "label_1_annotation"])
+            + ".png"
+        )
         annotation_file = os.path.join(
             args_dict["ANNOTATION_DATASET_FOLDER"], annotation_file
         )
@@ -467,14 +475,14 @@ for idx, ((x, y), f) in enumerate(zip(img_gen, img_gen.filenames)):
             annotation_image = (np.array(annotation_image) >= 30).astype(int)
 
             IMAGES[idx]["annotation"] = annotation_image
-    else:
-        IMAGES[idx]["annotation"] = np.zeros_like(np.squeeze(x))
+        else:
+            IMAGES[idx]["annotation"] = np.zeros_like(np.squeeze(x["image"].numpy()))
+    except:
+        IMAGES[idx]["annotation"] = np.zeros_like(np.squeeze(x["image"].numpy()))
 
-    if idx + 1 == len(img_gen):
-        break
 
 print(f"Done!")
-print(f"Pool of test data to work on: {len(img_gen)}")
+print(f"Pool of test data to work on: {len(IMAGES)}")
 
 #%% STEP 2 - GET GradCAMs FROM ALL THE MODELS
 # define parameters
@@ -490,13 +498,13 @@ for f in args_dict["CV_REPETITION_FOLDERS"]:
     f_indx = int(os.path.basename(f).split("_")[-1]) - 1
     # get index of subject for this fold
     if dataset_type == "test":
-        aus_subjects = config[dataset_type]
+        aus_subjects = train_val_test_files[dataset_type]
         # ################################
-        aus_subjects.extend(config["train"][1])
-        aus_subjects.extend(config["validation"][1])
+        aus_subjects.extend(train_val_test_files["train"][1])
+        aus_subjects.extend(train_val_test_files["validation"][1])
         # ################################
     else:
-        aus_subjects = config[dataset_type][f_indx]
+        aus_subjects = train_val_test_files[dataset_type][f_indx]
     # get subject index from the names
     aus_subjects = [int(s.split(".")[0].split("_")[-1]) for s in aus_subjects]
     # save information
@@ -565,10 +573,8 @@ for m_idx, model_dict in enumerate(MODELS):
     for layer in model.layers:
         if isinstance(layer, keras.layers.convolutional.Conv2D):
             name_layers.append(layer.name)
-    # name_layers = name_layers[0:10]
+    name_layers = name_layers[-2::]
 
-    break
-    # %%
     # loop through the test images of this model
     for img_idx in range(len(IMAGES)):
         image = IMAGES[img_idx]["image"]
@@ -586,9 +592,9 @@ for m_idx, model_dict in enumerate(MODELS):
             for idx_l, nl in enumerate(name_layers):
                 # ausiliary for gradCAM for each layer
                 temp_c_raw = []
-                for idx_c, c in enumerate([0, 1]):
+                for idx_c, c in enumerate([0, 1, 2]):
                     print(
-                        f"Working on model {m_idx+1}/{len(MODELS)} (image {img_idx+1:{len(str(len(img_gen)))}}/{len(img_gen)}, layer {idx_l+1}/{len(name_layers)}, class {idx_c+1}/{len([0,1])}) \r",
+                        f"Working on model {m_idx+1}/{len(MODELS)} (image {img_idx+1:{len(str(len(IMAGES)))}}/{len(IMAGES)}, layer {idx_l+1}/{len(name_layers)}, class {idx_c+1}/{len([0,1])}) \r",
                         end="",
                     )
                     # define gradCAM object for this layer and channel
@@ -612,7 +618,7 @@ for m_idx, model_dict in enumerate(MODELS):
 for img_idx in results.keys():
     # the image has been processed, save
     print(
-        f"Saving information for img {img_idx+1:{len(str(len(img_gen)))}}/{len(img_gen)}"
+        f"Saving information for img {img_idx+1:{len(str(len(results)))}}/{len(results)}"
     )
     aus_original_image_prediction_distribution = np.array(
         results[img_idx]["original_image_prediction_distribution"]

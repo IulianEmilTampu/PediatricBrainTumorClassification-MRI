@@ -68,7 +68,11 @@ def plot_gradCAM(
     """
 
     foreground_class = class_of_interest
-    background_class = 0 if class_of_interest == 1 else 1
+    # background_class = 0 if class_of_interest == 1 else 1
+    mean_logits = np.mean(
+        gradCAM_dictionary["original_image_prediction_distribution"], axis=0
+    )
+    background_class = np.argsort(mean_logits)[1]
 
     plt.rcParams["font.family"] = "Times New Roman"
 
@@ -568,7 +572,7 @@ else:
     # # # # # # # # # # # # # # DEBUG
     print("Running in debug mode.")
     args_dict = {
-        "GRADCAM_FILES_PATH": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Detection_infra_optm_ADAM_EfficientNet_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.001_batchSize_32_pretrained_True_useAge_False_useGradCAM_False/Explainability_analysis/GradCAMs",
+        "GRADCAM_FILES_PATH": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Round_4/Classification_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_1111/Explainability_analysis/GradCAMs",
     }
 # specify where to save the results
 args_dict["SAVE_PATH"] = os.path.join(args_dict["GRADCAM_FILES_PATH"], "Visualization")
@@ -608,8 +612,8 @@ for idx, f in enumerate(args_dict["gradCAM_FILES"]):
     gradCAM_dict = np.load(f, allow_pickle=True).item()
 
     # get p-value for each region in the image
-    interest_class = 1
-    layers_of_interest = range(81)
+    interest_class = gradCAM_dict["ground_truth"].argmax()
+    layers_of_interest = range(len(gradCAM_dict["layer_names"]))
 
     for layer_of_interest in layers_of_interest:
         save_path = os.path.join(
@@ -620,7 +624,7 @@ for idx, f in enumerate(args_dict["gradCAM_FILES"]):
             gradCAM_dict,
             class_of_interest=interest_class,
             layer_of_interest=layer_of_interest,
-            attribution_thr=0.6,
+            attribution_thr=0.8,
             save_path=save_path,
             scale=True,
             draw=False,

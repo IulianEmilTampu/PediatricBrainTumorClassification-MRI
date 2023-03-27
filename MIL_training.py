@@ -213,6 +213,7 @@ args_dict[
 # import tensorflow
 import tensorflow as tf
 import tensorflow_addons as tfa
+from tensorflow import keras
 import warnings
 
 tf.get_logger().setLevel(logging.ERROR)
@@ -289,78 +290,6 @@ with open(
 ) as file:
     config = json.load(file)
 
-# %% LOAD MODEL
-loaded_enc_model = tf.keras.models.load_model(args_dict["PATH_TO_ENCODER_MODEL"])
-# refine model to only get the image encoding vector
-# get index to the global average pooling layer (but using the output of the batch norm that follows the global average pooling)
-idx = [
-    i
-    for i, l in enumerate(loaded_enc_model.layers)
-    if l.name == "global_average_pooling2d"
-][0]
-img_input = loaded_enc_model.inputs
-encoded_image = loaded_enc_model.layers[idx + 1].output
-enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
-enc_model.summary()
-
-# %% DEFINE UTILITY THAT RETURNS A BAG OF ELEMENTS, ONE FOR EACH SUBJECT
-def get_per_subject_bag_enc(
-    subject_file_paths, enc_model, config_file, bag_size: int = 5
-):
-    """
-    Given a list of files, the encoding model and the configuration file which was used to train the
-    encoder model, returns a numpy array with size [bag_size, enc_dim] containing the encodings of the subject images.
-
-    Steps:
-    - create generator to consume the subject files
-    - encode the images
-    - aggregate in one bag
-    """
-
-    # build generator
-    target_size = (224, 224)
-    img_gen, _ = data_utilities.tfrs_data_generator(
-        file_paths=subject_file_paths,
-        input_size=target_size,
-        batch_size=1,
-        buffer_size=10,
-        return_gradCAM=config_file["USE_GRADCAM"],
-        return_age=config_file["USE_AGE"],
-        dataset_type="test",
-        nbr_classes=config_file["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                config_file["MODEL_TYPE"] == "EfficientNet",
-                config_file["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
-    )
-
-    # for each image get the encoded version using the encoding model
-    enc_images = enc_model.predict(img_gen, verbose=0)
-    # do something with the images
-    if enc_images.shape[0] < bag_size:
-        # randomly oversample to get the right number of instantces for the bag
-        for i in range(bag_size - enc_images.shape[0]):
-            enc_images = np.concatenate(
-                [
-                    enc_images,
-                    np.expand_dims(
-                        enc_images[np.random.randint(enc_images.shape[0])], axis=0
-                    ),
-                ]
-            )
-
-    if enc_images.shape[0] > bag_size:
-        enc_images = enc_images[0:bag_size, :]
-
-    # get also the label for this bag
-    bag_label = next(iter(img_gen))[1]
-
-    return (enc_images, bag_label.numpy())
-
 
 # build file names for each subjects int he training and validation sets
 image_files = [
@@ -382,17 +311,202 @@ for subj in per_subjects_files:
         f for f in image_files if subj == os.path.basename(f).split("_")[2]
     ]
 
+# %% LOAD MODEL
+loaded_enc_model = tf.keras.models.load_model(args_dict["PATH_TO_ENCODER_MODEL"])
+# refine model to only get the image encoding vector
+# get index to the global average pooling layer (but using the output of the batch norm that follows the global average pooling)
+idx = [
+    i
+    for i, l in enumerate(loaded_enc_model.layers)
+    if l.name == "global_average_pooling2d"
+][0]
+img_input = loaded_enc_model.inputs
+encoded_image = loaded_enc_model.layers[idx + 1].output
+enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
+# enc_model.summary()
+
+# %% DEFINE UTILITY THAT RETURNS A BAG OF ELEMENTS, ONE FOR EACH SUBJECT
+def get_per_subject_bag_enc(
+    subject_file_paths,
+    enc_model,
+    config_file,
+    bag_size: int = 5,
+    random_seed: int = 20091229,
+):
+    """
+    Given a list of files, the encoding model and the configuration file which was used to train the
+    encoder model, returns a numpy array with size [bag_size, enc_dim] containing the encodings of the subject images.
+
+    Steps:
+    - create generator to consume the subject files
+    - encode the images
+    - aggregate in one bag
+    """
+
+    # build generator
+    target_size = (224, 224)
+    img_gen, _ = data_utilities.tfrs_data_generator(
+        file_paths=subject_file_paths,
+        input_size=target_size,
+        batch_size=len(subject_file_paths),
+        buffer_size=10,
+        return_gradCAM=config_file["USE_GRADCAM"],
+        return_age=config_file["USE_AGE"],
+        dataset_type="test",
+        nbr_classes=config_file["NBR_CLASSES"],
+        output_as_RGB=True
+        if any(
+            [
+                config_file["MODEL_TYPE"] == "EfficientNet",
+                config_file["MODEL_TYPE"] == "ResNet50",
+            ]
+        )
+        else False,
+    )
+
+    # get out samples from the generator
+    sample = next(iter(img_gen))
+    bag_imgs, bag_label = sample[0]["image"].numpy(), sample[1][0].numpy()
+
+    # for each image get the encoded version using the encoding model
+    enc_images = enc_model.predict(sample[0], verbose=0)
+
+    # fix the bag size based on the specifications
+    np.random.seed(random_seed)
+    if enc_images.shape[0] < bag_size:
+        # randomly oversample to get the right number of instantces for the bag
+        for i in range(bag_size - enc_images.shape[0]):
+            random_idx = np.random.randint(enc_images.shape[0])
+            enc_images = np.concatenate(
+                [
+                    enc_images,
+                    np.expand_dims(enc_images[random_idx], axis=0),
+                ]
+            )
+
+            bag_imgs = np.concatenate(
+                [
+                    bag_imgs,
+                    np.expand_dims(bag_imgs[random_idx], axis=0),
+                ]
+            )
+
+    if enc_images.shape[0] > bag_size:
+        aus_enc_images, aus_bag_imgs = [], []
+        random_idx = np.random.randint(
+            enc_images.shape[0],
+            size=bag_size,
+        )
+        for idx in random_idx:
+            aus_enc_images.append(enc_images[idx])
+            aus_bag_imgs.append(bag_imgs[idx])
+        # bring to the right shape
+        enc_images = np.stack(aus_enc_images)
+        bag_imgs = np.stack(aus_bag_imgs)
+
+    return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
+
+
 # get the actual subject bags of instances for each subject
-# %%
-tr_bags, tr_bags_labels = [], []
+tr_bags, tr_bags_labels, tr_bags_images = [], [], []
 for idx, subject_files in enumerate(per_subjects_files.values()):
     print(f"Working on subject {idx+1:} of {len(per_subjects_files)}")
-    bag, labels = get_per_subject_bag_enc(subject_files, enc_model, config, bag_size=3)
+    (bag, labels), images = get_per_subject_bag_enc(
+        subject_files, enc_model, config, bag_size=10
+    )
     tr_bags.append(bag)
     tr_bags_labels.append(labels)
-    if idx == 50:
-        break
+    tr_bags_images.append(images)
+    # if idx + 1 == 15:
+    #     break
+# reshape to have the bag dimension as first element and the number of bags as second element (from keras implementation)
+tr_bags = list(np.swapaxes(tr_bags, 0, 1))
+# make labels to be a np array
+tr_bags_labels = np.array(tr_bags_labels)
 
+print("Shape of training data after reshaping", np.array(tr_bags).shape)
+print(f"Type of training data: {type(tr_bags)}")
+
+print("Shape of first element in the training data: ", tr_bags[0].shape)
+print(f"Type of sample of training data: {type(tr_bags[0])}")
+
+print(
+    "Shape of the first element of the first training data sample: ",
+    tr_bags[0][0].shape,
+)
+print(f"Type of element sample of training data: {type(tr_bags[0][0])}")
+
+print(f"Shape of labels: {np.array(tr_bags_labels).shape}")
+print(f"Type of labels: {type(tr_bags_labels)}")
+
+print(f"Shape of first element labels: {tr_bags_labels[0].shape}")
+print(f"Type of labels: {type(tr_bags_labels[0])}")
+
+# %%
+def plot(
+    bags_labels,
+    bags_images,
+    bags_predictions=None,
+    bags_attention_weights=None,
+    nbr_bags_to_plot: int = 2,
+    nbr_imgs_per_bag: int = 3,
+):
+
+    """ "Utility for plotting bags and attention weights.
+
+    Args:
+      bags_encodigs: Input data that contains the bags of instances.
+      bags_labels: The associated bag labels of the input data.
+      bags_images : The images used to get the encodings (list with in each element a np.array [images, width, higth])
+      bags_predictions: Class labels model predictions.
+        If you don't specify anything, ground truth labels will be used.
+      bags_attention_weights: Attention weights for each instance within the input data.
+        If you don't specify anything, the values won't be displayed.
+    """
+
+    for b in range(nbr_bags_to_plot):
+        # chose random bag from the available ones
+        b_idx = np.random.randint(len(bags_images))
+        # build figure with nbr_imgs_per_bag images from the randomly selected bag
+        fig, ax = plt.subplots(
+            nrows=1, ncols=nbr_imgs_per_bag, figsize=(5 * nbr_imgs_per_bag, 7)
+        )
+        for i in range(nbr_imgs_per_bag):
+            ax[i].imshow(bags_images[b_idx][i, :, :], cmap="gray", interpolation=None)
+            if bags_attention_weights is not None:
+                ax[i].set_title(
+                    f"Attention w.: {bags_attention_weights[b_idx][i]}", fontsize=20
+                )
+            # make axis pretty
+            ax[i].axis("off")
+        if bags_predictions is not None:
+            plt.suptitle(
+                f"Bag nbr. {b}\nGT: {bags_labels[b_idx]}\nPred: {bags_predictions[b_idx]}",
+                fontsize=20,
+            )
+        else:
+            plt.suptitle(f"Bag nbr. {b}\nGT:  {bags_labels[b_idx]}", fontsize=20)
+        plt.show(fig)
+
+
+plot(
+    bags_labels=tr_bags_labels,
+    bags_images=tr_bags_images,
+    bags_predictions=class_predictions,
+    bags_attention_weights=attention_params,
+    nbr_bags_to_plot=2,
+    nbr_imgs_per_bag=4,
+)
+
+# # Plot some of validation data bags per class.
+# plot(
+#     bags_labels = tr_bags_labels,
+#     bags_images = tr_bags_images,
+#     bags_predictions = None,
+#     bags_attention_weights = None,
+#     nbr_bags_to_plot = 2,
+#     nbr_imgs_per_bag = 3
+# )
 # %% CREATE MIL layer
 
 from tensorflow import keras
@@ -539,9 +653,9 @@ def create_model(num_classes, instance_shape, bag_size: int = 25):
 
 
 model = create_model(
-    num_classes=tr_bags[0][1].shape[-1],
+    num_classes=tr_bags_labels[0].shape[-1],
     instance_shape=tr_bags[0][0].shape[-1],
-    bag_size=tr_bags[0][0].shape[0],
+    bag_size=len(tr_bags),
 )
 model.summary()
 # %% COMPILE MODEL
@@ -615,7 +729,6 @@ model.compile(
 )
 
 # %% TRAIN MODEL
-
 import tqdm
 
 
@@ -626,7 +739,7 @@ def train(train_data, train_labels, val_data, val_labels, model, config):
     # Path where to save best weights.
 
     # Take the file name from the wrapper.
-    file_path = "/tmp/best_model_weights.h5"
+    file_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights.h5")
 
     # Initialize model checkpoint callback.
     model_checkpoint = keras.callbacks.ModelCheckpoint(
@@ -648,20 +761,20 @@ def train(train_data, train_labels, val_data, val_labels, model, config):
     # Compile model.
     model.compile(
         optimizer="adam",
-        loss="sparse_categorical_crossentropy",
+        loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
 
     # Fit model.
     model.fit(
-        tf.stack(train_data),
-        tf.stack(train_labels),
+        train_data,
+        train_labels,
         validation_data=(val_data, val_labels),
-        epochs=20,
+        epochs=5,
         # class_weight=config["CLASS_WEIGHTS"],
         batch_size=1,
         callbacks=[early_stopping, model_checkpoint],
-        verbose=0,
+        verbose=1,
     )
 
     # Load best weights.
@@ -675,12 +788,64 @@ trained_models = [
     train(tr_bags, tr_bags_labels, tr_bags, tr_bags_labels, model, config)
 ]
 
+# %% EVALUATION
+def predict(data, labels, trained_models):
 
-# %%
+    # Collect info per model.
+    models_predictions = []
+    models_attention_weights = []
+    models_losses = []
+    models_accuracies = []
+
+    for model in trained_models:
+
+        # Predict output classes on data.
+        predictions = model.predict(data)
+        models_predictions.append(predictions)
+
+        # Create intermediate model to get MIL attention layer weights.
+        intermediate_model = keras.Model(model.input, model.get_layer("alpha").output)
+
+        # Predict MIL attention layer weights.
+        intermediate_predictions = intermediate_model.predict(data)
+
+        attention_weights = np.squeeze(np.swapaxes(intermediate_predictions, 1, 0))
+        models_attention_weights.append(attention_weights)
+
+        loss, accuracy = model.evaluate(data, labels, verbose=0)
+        models_losses.append(loss)
+        models_accuracies.append(accuracy)
+
+    print(
+        f"The average loss and accuracy are {np.sum(models_losses, axis=0) / ENSEMBLE_AVG_COUNT:.2f}"
+        f" and {100 * np.sum(models_accuracies, axis=0) / ENSEMBLE_AVG_COUNT:.2f} % resp."
+    )
+
+    return (
+        np.sum(models_predictions, axis=0) / ENSEMBLE_AVG_COUNT,
+        np.sum(models_attention_weights, axis=0) / ENSEMBLE_AVG_COUNT,
+    )
+
+
+# Evaluate and predict classes and attention scores on validation data.
+ENSEMBLE_AVG_COUNT = 1
+class_predictions, attention_params = predict(tr_bags, tr_bags_labels, trained_models)
+
+plot(
+    bags_labels=tr_bags_labels,
+    bags_images=tr_bags_images,
+    bags_predictions=class_predictions,
+    bags_attention_weights=attention_params,
+    nbr_bags_to_plot=2,
+    nbr_imgs_per_bag=3,
+)
+
+
+# %% FROM KERAS IMPLEMENTATION
 POSITIVE_CLASS = 1
-BAG_COUNT = 1000
-VAL_BAG_COUNT = 300
-BAG_SIZE = 3
+BAG_COUNT = 500
+VAL_BAG_COUNT = 100
+BAG_SIZE = 5
 PLOT_SIZE = 3
 ENSEMBLE_AVG_COUNT = 1
 
@@ -717,9 +882,6 @@ def create_bags(input_data, input_labels, positive_class, bag_count, instance_co
         bags.append(instances_data)
         bag_labels.append(np.array([bag_label]))
 
-    print(f"Positive bags: {count}")
-    print(f"Negative bags: {bag_count - count}")
-
     return (list(np.swapaxes(bags, 0, 1)), np.array(bag_labels))
 
 
@@ -728,10 +890,140 @@ def create_bags(input_data, input_labels, positive_class, bag_count, instance_co
 
 # Create training data.
 train_data, train_labels = create_bags(
-    x_train, y_train, POSITIVE_CLASS, BAG_COUNT, BAG_SIZE
+    x_train, y_train, POSITIVE_CLASS, bag_count=10, instance_count=5
 )
 
-# Create validation data.
-val_data, val_labels = create_bags(
-    x_val, y_val, POSITIVE_CLASS, VAL_BAG_COUNT, BAG_SIZE
+# # Create validation data.
+# val_data, val_labels = create_bags(
+#     x_val, y_val, POSITIVE_CLASS, VAL_BAG_COUNT, BAG_SIZE
+# )
+
+print("Shape of training data after reshaping", np.array(train_data).shape)
+print(f"Type of training data: {type(train_data)}")
+
+print("Shape of first element in the training data: ", train_data[0].shape)
+print(f"Type of sample of training data: {type(train_data[0])}")
+
+print(
+    "Shape of the first element of the first training data sample: ",
+    train_data[0][0].shape,
 )
+print(f"Type of element sample of training data: {type(train_data[0][0])}")
+
+print(f"Shape of labels: {np.array(train_labels).shape}")
+print(f"Type of labels: {type(train_labels)}")
+
+print(f"Shape of first element labels: {train_labels[0].shape}")
+print(f"Type of labels: {type(train_labels[0])}")
+
+# %%
+from tensorflow.keras import layers
+
+
+def create_model(instance_shape):
+
+    # Extract features from inputs.
+    inputs, embeddings = [], []
+    shared_dense_layer_1 = layers.Dense(128, activation="relu")
+    shared_dense_layer_2 = layers.Dense(64, activation="relu")
+    for _ in range(BAG_SIZE):
+        inp = layers.Input(instance_shape)
+        flatten = layers.Flatten()(inp)
+        dense_1 = shared_dense_layer_1(flatten)
+        dense_2 = shared_dense_layer_2(dense_1)
+        inputs.append(inp)
+        embeddings.append(dense_2)
+
+    # Invoke the attention layer.
+    alpha = MILAttentionLayer(
+        weight_params_dim=256,
+        kernel_regularizer=keras.regularizers.l2(0.01),
+        use_gated=True,
+        name="alpha",
+    )(embeddings)
+
+    # Multiply attention weights with the input layers.
+    multiply_layers = [
+        layers.multiply([alpha[i], embeddings[i]]) for i in range(len(alpha))
+    ]
+
+    # Concatenate layers.
+    concat = layers.concatenate(multiply_layers, axis=1)
+
+    # Classification output node.
+    output = layers.Dense(2, activation="softmax")(concat)
+
+    return keras.Model(inputs, output)
+
+
+def compute_class_weights(labels):
+
+    # Count number of postive and negative bags.
+    negative_count = len(np.where(labels == 0)[0])
+    positive_count = len(np.where(labels == 1)[0])
+    total_count = negative_count + positive_count
+
+    # Build class weight dictionary.
+    return {
+        0: (1 / negative_count) * (total_count / 2),
+        1: (1 / positive_count) * (total_count / 2),
+    }
+
+
+def train(train_data, train_labels, val_data, val_labels, model):
+
+    # Train model.
+    # Prepare callbacks.
+    # Path where to save best weights.
+
+    # Take the file name from the wrapper.
+    file_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights.h5")
+
+    # Initialize model checkpoint callback.
+    model_checkpoint = keras.callbacks.ModelCheckpoint(
+        file_path,
+        monitor="val_loss",
+        verbose=0,
+        mode="min",
+        save_best_only=True,
+        save_weights_only=True,
+    )
+
+    # Initialize early stopping callback.
+    # The model performance is monitored across the validation data and stops training
+    # when the generalization error cease to decrease.
+    early_stopping = keras.callbacks.EarlyStopping(
+        monitor="val_loss", patience=10, mode="min"
+    )
+
+    # Compile model.
+    model.compile(
+        optimizer="adam",
+        loss="sparse_categorical_crossentropy",
+        metrics=["accuracy"],
+    )
+
+    # Fit model.
+    model.fit(
+        train_data,
+        train_labels,
+        validation_data=(val_data, val_labels),
+        epochs=20,
+        # class_weight=compute_class_weights(train_labels),
+        batch_size=1,
+        callbacks=[early_stopping, model_checkpoint],
+        verbose=2,
+    )
+
+    # Load best weights.
+    model.load_weights(file_path)
+
+    return model
+
+
+# Building model(s).
+instance_shape = train_data[0][0].shape
+aus_model = create_model(instance_shape)
+
+# Training model(s).
+train(train_data, train_labels, train_data, train_labels, aus_model)

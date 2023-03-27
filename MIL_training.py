@@ -269,20 +269,7 @@ with open(
     os.path.join(args_dict["PATH_TO_CONFIGURATION_FILES"], "train_val_test_files.json")
 ) as file:
     train_val_test_files = json.load(file)
-    test_files = [
-        os.path.join(args_dict["IMG_DATASET_FOLDER"], args_dict["MR_MODALITIES"][0], f)
-        for f in train_val_test_files["test"]
-    ]
 
-    # get also per subject files
-    per_subjects_files = dict.fromkeys(
-        [os.path.basename(f).split("_")[2] for f in test_files]
-    )
-    for subj in per_subjects_files:
-        per_subjects_files[subj] = {"files": [], "gt": [], "last": [], "best": []}
-        per_subjects_files[subj]["files"] = [
-            f for f in test_files if subj == os.path.basename(f).split("_")[2]
-        ]
 
 # open also the configuration file
 with open(
@@ -290,25 +277,39 @@ with open(
 ) as file:
     config = json.load(file)
 
-
 # build file names for each subjects int he training and validation sets
-image_files = [
+tr_val_image_files = [
     os.path.join(args_dict["IMG_DATASET_FOLDER"], args_dict["MR_MODALITIES"][0], f)
     for f in train_val_test_files["train"][0]
 ]
-image_files.extend(
+tr_val_image_files.extend(
     [
         os.path.join(args_dict["IMG_DATASET_FOLDER"], args_dict["MR_MODALITIES"][0], f)
         for f in train_val_test_files["validation"][0]
     ]
 )
+# and test image files
+test_image_files = [
+    os.path.join(args_dict["IMG_DATASET_FOLDER"], args_dict["MR_MODALITIES"][0], f)
+    for f in train_val_test_files["test"]
+]
+
 # get also per subject files
-per_subjects_files = dict.fromkeys(
-    [os.path.basename(f).split("_")[2] for f in image_files]
+tr_val_per_subjects_files = dict.fromkeys(
+    [os.path.basename(f).split("_")[2] for f in tr_val_image_files]
 )
-for subj in per_subjects_files:
-    per_subjects_files[subj] = [
-        f for f in image_files if subj == os.path.basename(f).split("_")[2]
+for subj in tr_val_per_subjects_files:
+    tr_val_per_subjects_files[subj] = [
+        f for f in tr_val_image_files if subj == os.path.basename(f).split("_")[2]
+    ]
+
+# test data now
+test_per_subjects_files = dict.fromkeys(
+    [os.path.basename(f).split("_")[2] for f in test_image_files]
+)
+for subj in test_per_subjects_files:
+    test_per_subjects_files[subj] = [
+        f for f in test_image_files if subj == os.path.basename(f).split("_")[2]
     ]
 
 # %% LOAD MODEL
@@ -326,7 +327,7 @@ enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
 # enc_model.summary()
 
 # %% DEFINE UTILITY THAT RETURNS A BAG OF ELEMENTS, ONE FOR EACH SUBJECT
-def get_per_subject_bag_enc(
+def get_subject_bag_enc(
     subject_file_paths,
     enc_model,
     config_file,
@@ -409,9 +410,9 @@ def get_per_subject_bag_enc(
 
 # get the actual subject bags of instances for each subject
 tr_bags, tr_bags_labels, tr_bags_images = [], [], []
-for idx, subject_files in enumerate(per_subjects_files.values()):
-    print(f"Working on subject {idx+1:} of {len(per_subjects_files)}")
-    (bag, labels), images = get_per_subject_bag_enc(
+for idx, subject_files in enumerate(tr_val_per_subjects_files.values()):
+    print(f"Working on subject {idx+1:} of {len(tr_val_per_subjects_files)}")
+    (bag, labels), images = get_subject_bag_enc(
         subject_files, enc_model, config, bag_size=10
     )
     tr_bags.append(bag)
@@ -419,10 +420,44 @@ for idx, subject_files in enumerate(per_subjects_files.values()):
     tr_bags_images.append(images)
     # if idx + 1 == 15:
     #     break
+
+# get the actual subject bags of instances for each subject
+test_bags, test_bags_labels, test_bags_images = [], [], []
+for idx, subject_files in enumerate(test_per_subjects_files.values()):
+    print(f"Working on subject {idx+1:} of {len(test_per_subjects_files)}")
+    (bag, labels), images = get_subject_bag_enc(
+        subject_files, enc_model, config, bag_size=10
+    )
+    test_bags.append(bag)
+    test_bags_labels.append(labels)
+    test_bags_images.append(images)
+    # if idx + 1 == 15:
+    #     break
+
+# compute class weights on the training data
+class_weights_values = list(
+    np.sum(np.bincount(np.array(tr_bags_labels).argmax(axis=-1)))
+    / (
+        len(np.bincount(np.array(tr_bags_labels).argmax(axis=-1)))
+        * np.bincount(np.array(tr_bags_labels).argmax(axis=-1))
+    )
+)
+
+args_dict["CLASS_WEIGHTS"] = {}
+if not all([config["NBR_CLASSES"] == 2, config["DATASET_TYPE"] == "BRATS"]):
+    for c in range(config["NBR_CLASSES"]):
+        config["CLASS_WEIGHTS"][c] = class_weights_values[c] ** 2
+else:
+    for c in range(args_dict["NBR_CLASSES"]):
+        args_dict["CLASS_WEIGHTS"][c] = 1
+
 # reshape to have the bag dimension as first element and the number of bags as second element (from keras implementation)
 tr_bags = list(np.swapaxes(tr_bags, 0, 1))
+test_bags = list(np.swapaxes(test_bags, 0, 1))
 # make labels to be a np array
 tr_bags_labels = np.array(tr_bags_labels)
+test_bags_labels = np.array(test_bags_labels)
+
 
 print("Shape of training data after reshaping", np.array(tr_bags).shape)
 print(f"Type of training data: {type(tr_bags)}")
@@ -475,7 +510,8 @@ def plot(
             ax[i].imshow(bags_images[b_idx][i, :, :], cmap="gray", interpolation=None)
             if bags_attention_weights is not None:
                 ax[i].set_title(
-                    f"Attention w.: {bags_attention_weights[b_idx][i]}", fontsize=20
+                    f"Attention w.: {bags_attention_weights[b_idx][i]:0.3f}",
+                    fontsize=20,
                 )
             # make axis pretty
             ax[i].axis("off")
@@ -489,24 +525,15 @@ def plot(
         plt.show(fig)
 
 
+# Plot some of validation data bags per class.
 plot(
     bags_labels=tr_bags_labels,
     bags_images=tr_bags_images,
-    bags_predictions=class_predictions,
-    bags_attention_weights=attention_params,
-    nbr_bags_to_plot=2,
-    nbr_imgs_per_bag=4,
+    bags_predictions=None,
+    bags_attention_weights=None,
+    nbr_bags_to_plot=5,
+    nbr_imgs_per_bag=8,
 )
-
-# # Plot some of validation data bags per class.
-# plot(
-#     bags_labels = tr_bags_labels,
-#     bags_images = tr_bags_images,
-#     bags_predictions = None,
-#     bags_attention_weights = None,
-#     nbr_bags_to_plot = 2,
-#     nbr_imgs_per_bag = 3
-# )
 # %% CREATE MIL layer
 
 from tensorflow import keras
@@ -770,11 +797,11 @@ def train(train_data, train_labels, val_data, val_labels, model, config):
         train_data,
         train_labels,
         validation_data=(val_data, val_labels),
-        epochs=5,
-        # class_weight=config["CLASS_WEIGHTS"],
+        epochs=max_epochs,
         batch_size=1,
         callbacks=[early_stopping, model_checkpoint],
         verbose=1,
+        class_weight=config["CLASS_WEIGHTS"],
     )
 
     # Load best weights.
@@ -829,18 +856,31 @@ def predict(data, labels, trained_models):
 
 # Evaluate and predict classes and attention scores on validation data.
 ENSEMBLE_AVG_COUNT = 1
-class_predictions, attention_params = predict(tr_bags, tr_bags_labels, trained_models)
+class_predictions, attention_params = predict(test_bags, test_bags_labels, trained_models)
 
 plot(
-    bags_labels=tr_bags_labels,
-    bags_images=tr_bags_images,
+    bags_labels=test_bags_labels,
+    bags_images=test_bags_images,
     bags_predictions=class_predictions,
     bags_attention_weights=attention_params,
     nbr_bags_to_plot=2,
-    nbr_imgs_per_bag=3,
+    nbr_imgs_per_bag=8,
 )
 
-
+utilities.plotConfusionMatrix(
+                    GT=np.array(test_bags_labels),
+                    PRED=class_predictions,
+                    classes=["Not_tumor", "Tumor"]
+                    if config["NBR_CLASSES"] == 2
+                    else (
+                        ["ASTR", "EP", "MED"]
+                        if config["NBR_CLASSES"] == 3
+                        else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
+                    ),
+                    savePath=None,
+                    saveName=None,
+                    draw=True,
+                )
 # %% FROM KERAS IMPLEMENTATION
 POSITIVE_CLASS = 1
 BAG_COUNT = 500

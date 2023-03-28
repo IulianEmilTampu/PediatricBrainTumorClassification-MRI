@@ -312,7 +312,7 @@ else:
         "NBR_FOLDS": 1,
         "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 2,
+        "MAX_EPOCHS": 50,
         "DATA_AUGMENTATION": True,
         "DATA_NORMALIZATION": True,
         "DATA_SCALE": True,
@@ -321,7 +321,7 @@ else:
         "FREEZE_WEIGHTS": True,
         "USE_AGE": True,
         "AGE_NORMALIZATION": True,
-        "AGE_ENCODER_VERSION": "simple_age_encoder",
+        "AGE_ENCODER_VERSION": "no_encoder",
         "USE_GRADCAM": False,
         "LOSS": "MCC_and_CCE_Loss",
         "RANDOM_SEED_NUMBER": 1111,
@@ -329,7 +329,7 @@ else:
         "DEBUG_DATASET_FRACTION": 1,
         "TFR_DATA": True,
         "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TTTTTTTTTT",
+        "MODEL_NAME": "TEST",
         "OPTIMIZER": "ADAM",
     }
 
@@ -923,7 +923,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
     # values obtained using the LRFind callback
 
     learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-        initial_learning_rate=1e-3,
+        initial_learning_rate=1e-2,
         maximal_learning_rate=1e-1,
         scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
         step_size=2 * train_steps,
@@ -1084,179 +1084,6 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         include_optimizer=False,
     )
 
-    del model
-    # ------------------
-    # MODEL EVALUATION
-    # ------------------
-    # importlib.reload(utilities)
-    # # try to delete the model and then reload it
-    # del model
-    # """
-    # Here evaluate last and best models on both the validation data and the test data
-    # """
-    # for m in ["last", "best"]:
-    #     if m == "best":
-    #         loaded_model = tf.keras.models.load_model(
-    #             os.path.join(best_model_path, "best_model")
-    #         )
-    #     else:
-    #         loaded_model = tf.keras.models.load_model(
-    #             os.path.join(last_model_path, "last_model")
-    #         )
-    #     for data_gen, data_gen_steps, dataset_name in zip(
-    #         [test_gen, val_gen], [test_steps, val_steps], ["test", "validation"]
-    #     ):
-    #         print(f'{" "*6}Evaluationg {m} model on {dataset_name} data.')
-    #         # get predicitons
-    #         Ptest_softmax = []
-    #         Ytest_categorical = []
-    #         ds_iter = iter(data_gen)
-    #         ds_steps = data_gen_steps
-    #         for i in range(ds_steps):
-    #             x, y = next(ds_iter)
-    #             Ytest_categorical.append(y)
-    #             Ptest_softmax.append(loaded_model.predict(x, verbose=0))
-    #         Ptest_softmax = np.row_stack(Ptest_softmax)
-
-    #         Ptest = np.argmax(Ptest_softmax, axis=-1)
-    #         Ytest_categorical = np.row_stack(Ytest_categorical)
-
-    #         # save metrics for later if looking at the test set
-    #         if dataset_name == "test":
-    #             summary_test[str(cv_f + 1)][m] = utilities.get_performance_metrics(
-    #                 Ytest_categorical, Ptest_softmax, average="macro"
-    #             )
-    #             summary_test[str(cv_f + 1)][m]["per_case_prediction"] = Ptest
-
-    #         # plot metrics
-    #         utilities.plotConfusionMatrix(
-    #             GT=Ytest_categorical,
-    #             PRED=Ptest_softmax,
-    #             classes=["Not_tumor", "Tumor"]
-    #             if args_dict["NBR_CLASSES"] == 2
-    #             else (
-    #                 ["ASTR", "EP", "MED"]
-    #                 if args_dict["NBR_CLASSES"] == 3
-    #                 else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
-    #             ),
-    #             savePath=save_model_path,
-    #             saveName=f"CM_{m}_model_{dataset_name}",
-    #             draw=False,
-    #         )
-    #         utilities.plotROC(
-    #             GT=Ytest_categorical,
-    #             PRED=Ptest_softmax,
-    #             classes=["Not_tumor", "Tumor"]
-    #             if args_dict["NBR_CLASSES"] == 2
-    #             else (
-    #                 ["ASTR", "EP", "MED"]
-    #                 if args_dict["NBR_CLASSES"] == 3
-    #                 else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
-    #             ),
-    #             savePath=save_model_path,
-    #             saveName=f"ROC_{m}_model_{dataset_name}",
-    #             draw=False,
-    #         )
-    #         utilities.plotPR(
-    #             GT=Ytest_categorical,
-    #             PRED=Ptest_softmax,
-    #             classes=["Not_tumor", "Tumor"]
-    #             if args_dict["NBR_CLASSES"] == 2
-    #             else (
-    #                 ["ASTR", "EP", "MED"]
-    #                 if args_dict["NBR_CLASSES"] == 3
-    #                 else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
-    #             ),
-    #             savePath=save_model_path,
-    #             saveName=f"PR_{m}_model_{dataset_name}",
-    #             draw=False,
-    #         )
-
-    #         # save per-subject classification (only test)
-    #         if all([dataset_name == "test", args_dict["NBR_CLASSES"] != 2]):
-    #             MAP_pred = []
-    #             MODE_pred = []
-    #             weighted_MAP_pred = []
-    #             weighted_MODE_pred = []
-    #             for idx, test_subject in enumerate(subj_test_idx):
-    #                 print(f"Working on subject {idx+1}/{len(subj_test_idx)} \r", end="")
-    #                 # get all the files for this subject
-    #                 subj_files = [
-    #                     f for f in test_files if test_subject[0] in os.path.basename(f)
-    #                 ]
-    #                 # build generator
-    #                 test_gen, test_steps = data_utilities.tfrs_data_generator(
-    #                     file_paths=subj_files,
-    #                     input_size=target_size,
-    #                     batch_size=len(subj_files),
-    #                     buffer_size=1,
-    #                     return_gradCAM=args_dict["USE_GRADCAM"],
-    #                     return_age=args_dict["USE_AGE"],
-    #                     dataset_type="test",
-    #                     nbr_classes=args_dict["NBR_CLASSES"],
-    #                     output_as_RGB=True
-    #                     if any(
-    #                         [
-    #                             args_dict["MODEL_TYPE"] == "EfficientNet",
-    #                             args_dict["MODEL_TYPE"] == "ResNet50",
-    #                         ]
-    #                     )
-    #                     else False,
-    #                 )
-    #                 # predict cases
-    #                 pred = loaded_model.predict(test_gen, verbose=0)
-    #                 # compute aggregated prediction (not weighted)
-    #                 MAP_pred.append(pred.mean(axis=0).argmax())
-    #                 vals, counts = np.unique(pred.argmax(axis=1), return_counts=True)
-    #                 mode_value = np.argwhere(counts == np.max(counts))
-    #                 MODE_pred.append(vals[mode_value].flatten().tolist()[0])
-
-    #                 # compute aggregated prediction (weighted)
-    #                 slice_position = np.array(
-    #                     [
-    #                         float(Path(os.path.basename(f)).stem.split("_")[-1])
-    #                         for f in subj_files
-    #                     ]
-    #                 )
-    #                 weights = np.where(
-    #                     slice_position < 50, slice_position, 100 - slice_position
-    #                 )
-    #                 # normalize weights (so that the sum goes to 2 (two halfs of the tumor))
-    #                 weights = weights / weights.sum() * 2
-
-    #                 weighted_MAP_pred.append(
-    #                     (pred * weights[:, np.newaxis]).mean(axis=0).argmax()
-    #                 )
-
-    #                 # here get the class which sum of weights is the highest
-    #                 weighted_prediction = [
-    #                     np.sum(weights, where=pred.argmax(axis=1) == i)
-    #                     for i in range(args_dict["NBR_CLASSES"])
-    #                 ]
-    #                 weighted_MODE_pred.append(np.argmax(weighted_prediction))
-
-    #             gt = [i[1] for i in subj_test_idx]
-    #             for pred, pred_name in zip(
-    #                 [MAP_pred, MODE_pred, weighted_MAP_pred, weighted_MODE_pred],
-    #                 ["MeanArgmax", "ArgmaxMode", "wMeanArgmax", "wArgmaxMode"],
-    #             ):
-    #                 utilities.plotConfusionMatrix(
-    #                     GT=gt,
-    #                     PRED=pred,
-    #                     classes=["Not_tumor", "Tumor"]
-    #                     if args_dict["NBR_CLASSES"] == 2
-    #                     else (
-    #                         ["ASTR", "EP", "MED"]
-    #                         if args_dict["NBR_CLASSES"] == 3
-    #                         else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
-    #                     ),
-    #                     savePath=save_model_path,
-    #                     saveName=f"CM_{m}_model_{dataset_name}_{pred_name}",
-    #                     draw=False,
-    #                 )
-
-    #     del loaded_model
-
     # ## SAVE FINAL CURVES
     print(f'{" "*6}Saving training curves and tabular evaluation data...')
     fig, ax = plt.subplots(
@@ -1295,100 +1122,6 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
 
     fig.savefig(os.path.join(save_model_path, "training_curves.png"))
     plt.close(fig)
-
-    # ## SAVE MODEL PORFORMANCE FOR for THIS fold
-    # for m in ["last", "best"]:
-    #     filename = os.path.join(
-    #         args_dict["SAVE_PATH"],
-    #         f"fold_{str(cv_f+1)}",
-    #         f"{m}_summary_evaluation.txt",
-    #     )
-    #     accs = summary_test[str(cv_f + 1)][m]["overall_accuracy"] * 100
-    #     np.savetxt(filename, [accs], fmt="%.4f")
-
-    # # SAVE PER METRICS AS CSV
-    # summary_file = os.path.join(
-    #     args_dict["SAVE_PATH"],
-    #     f"fold_{str(cv_f+1)}",
-    #     f"tabular_test_summary.csv",
-    # )
-    # csv_file = open(summary_file, "w")
-    # writer = csv.writer(csv_file)
-    # csv_header = [
-    #     "classification_type",
-    #     "nbr_classes",
-    #     "model_type",
-    #     "model_version",
-    #     "fold",
-    #     "precision",
-    #     "recall",
-    #     "accuracy",
-    #     "f1-score",
-    #     "auc",
-    #     "matthews_correlation_coefficient",
-    # ]
-    # writer.writerow(csv_header)
-    # # build rows to save in the csv file
-    # csv_rows = []
-    # for m in ["last", "best"]:
-    #     csv_rows.append(
-    #         [
-    #             "tumor-vs-no_tumor",
-    #             2,
-    #             "2D_detection_model",
-    #             m,
-    #             cv_f + 1,
-    #             summary_test[str(cv_f + 1)][m]["overall_precision"],
-    #             summary_test[str(cv_f + 1)][m]["overall_recall"],
-    #             summary_test[str(cv_f + 1)][m]["overall_accuracy"],
-    #             summary_test[str(cv_f + 1)][m]["overall_f1-score"],
-    #             summary_test[str(cv_f + 1)][m]["overall_auc"],
-    #             summary_test[str(cv_f + 1)][m]["matthews_correlation_coefficient"],
-    #         ]
-    #     )
-    # writer.writerows(csv_rows)
-    # csv_file.close()
-    # print(f'{" "*6}Done! To the next fold.')
-
-# ## SAVE SUMMARY FOR ALL THE FOLDS IN ONE FILE
-# summary_file = os.path.join(args_dict["SAVE_PATH"], f"tabular_test_summary.csv")
-# csv_file = open(summary_file, "w")
-# writer = csv.writer(csv_file)
-# csv_header = [
-#     "classification_type",
-#     "nbr_classes",
-#     "model_type",
-#     "model_version",
-#     "fold",
-#     "precision",
-#     "recall",
-#     "accuracy",
-#     "f1-score",
-#     "auc",
-#     "matthews_correlation_coefficient",
-# ]
-# writer.writerow(csv_header)
-# # build rows to save in the csv file
-# csv_rows = []
-# for cv_f in range(args_dict["NBR_FOLDS"]):
-#     for m in ["last", "best"]:
-#         csv_rows.append(
-#             [
-#                 "tumor-vs-no_tumor",
-#                 2,
-#                 m,
-#                 "DetectionModel",
-#                 cv_f + 1,
-#                 summary_test[str(cv_f + 1)][m]["overall_precision"],
-#                 summary_test[str(cv_f + 1)][m]["overall_recall"],
-#                 summary_test[str(cv_f + 1)][m]["overall_accuracy"],
-#                 summary_test[str(cv_f + 1)][m]["overall_f1-score"],
-#                 summary_test[str(cv_f + 1)][m]["overall_auc"],
-#                 summary_test[str(cv_f + 1)][m]["matthews_correlation_coefficient"],
-#             ]
-#         )
-# writer.writerows(csv_rows)
-# csv_file.close()
 
 # ------------------
 # MODEL EVALUATION

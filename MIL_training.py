@@ -189,8 +189,8 @@ else:
         "LEARNING_RATE": 0.0001,
         "BATCH_SIZE": 32,
         "MAX_EPOCHS": 50,
-        "PATH_TO_ENCODER_MODEL": r"C:\Users\iulta54\Documents\PEDIAT~1\TRAINE~1\TEST_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_True_no_encoder_useGradCAM_False_seed_1111\fold_1\last_model\last_model",
-        "PATH_TO_CONFIGURATION_FILES": r"C:\Users\iulta54\Documents\PEDIAT~1\TRAINE~1\TEST_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_True_no_encoder_useGradCAM_False_seed_1111",
+        "PATH_TO_ENCODER_MODEL": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4\fold_2\last_model\last_model",
+        "PATH_TO_CONFIGURATION_FILES": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4",
         "MIL_USE_AGE": True,
         "AGE_NORMALIZATION": True,
         "LOSS": "MCC_and_CCE_Loss",
@@ -319,14 +319,14 @@ loaded_enc_model = tf.keras.models.load_model(args_dict["PATH_TO_ENCODER_MODEL"]
 idx = [
     i
     for i, l in enumerate(loaded_enc_model.layers)
-    if l.name == "global_average_pooling2d"
+    if "global_average_pooling2d" in l.name
 ][0]
 img_input = loaded_enc_model.inputs
 encoded_image = loaded_enc_model.layers[idx + 1].output
 enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
 # enc_model.summary()
 
-# %% DEFINE UTILITY THAT RETURNS A BAG OF ELEMENTS, ONE FOR EACH SUBJECT
+# %% GET TRAINING BAGS (ONE BAG FOR EACH SUBJECT)
 def get_subject_bag_enc(
     subject_file_paths,
     enc_model,
@@ -477,7 +477,10 @@ print(f"Type of labels: {type(tr_bags_labels)}")
 print(f"Shape of first element labels: {tr_bags_labels[0].shape}")
 print(f"Type of labels: {type(tr_bags_labels[0])}")
 
-# %%
+# %% SOME PLOTTING
+plot_bags = False
+
+
 def plot(
     bags_labels,
     bags_images,
@@ -506,8 +509,15 @@ def plot(
         fig, ax = plt.subplots(
             nrows=1, ncols=nbr_imgs_per_bag, figsize=(5 * nbr_imgs_per_bag, 7)
         )
+        v_min, v_max = bags_images[b_idx].min(), bags_images[b_idx].max()
         for i in range(nbr_imgs_per_bag):
-            ax[i].imshow(bags_images[b_idx][i, :, :], cmap="gray", interpolation=None)
+            ax[i].imshow(
+                bags_images[b_idx][i, :, :],
+                cmap="gray",
+                interpolation=None,
+                vmin=v_min,
+                vmax=v_max,
+            )
             if bags_attention_weights is not None:
                 ax[i].set_title(
                     f"Attention w.: {bags_attention_weights[b_idx][i]:0.3f}",
@@ -517,23 +527,24 @@ def plot(
             ax[i].axis("off")
         if bags_predictions is not None:
             plt.suptitle(
-                f"Bag nbr. {b}\nGT: {bags_labels[b_idx]}\nPred: {bags_predictions[b_idx]}",
+                f"Bag nbr. {b_idx+1}\nGT: {bags_labels[b_idx]}\nPred: {bags_predictions[b_idx]}",
                 fontsize=20,
             )
         else:
-            plt.suptitle(f"Bag nbr. {b}\nGT:  {bags_labels[b_idx]}", fontsize=20)
+            plt.suptitle(f"Bag nbr. {b_idx+1}\nGT:  {bags_labels[b_idx]}", fontsize=20)
         plt.show(fig)
 
 
-# Plot some of validation data bags per class.
-plot(
-    bags_labels=tr_bags_labels,
-    bags_images=tr_bags_images,
-    bags_predictions=None,
-    bags_attention_weights=None,
-    nbr_bags_to_plot=5,
-    nbr_imgs_per_bag=8,
-)
+if plot_bags:
+    # Plot some of validation data bags per class.
+    plot(
+        bags_labels=tr_bags_labels,
+        bags_images=tr_bags_images,
+        bags_predictions=None,
+        bags_attention_weights=None,
+        nbr_bags_to_plot=5,
+        nbr_imgs_per_bag=8,
+    )
 # %% CREATE MIL layer
 
 from tensorflow import keras
@@ -644,7 +655,9 @@ class MILAttentionLayer(tf.keras.layers.Layer):
 
 
 # %% MIL MODEL
-def create_model(num_classes, instance_shape, bag_size: int = 25):
+def create_model(
+    num_classes, instance_shape, shared_MIL_encoding_dim: int = 128, bag_size: int = 25
+):
 
     # Extract features from inputs.
     inputs, embeddings = [], []
@@ -659,7 +672,7 @@ def create_model(num_classes, instance_shape, bag_size: int = 25):
 
     # Invoke the attention layer.
     alpha = MILAttentionLayer(
-        weight_params_dim=256,
+        weight_params_dim=shared_MIL_encoding_dim,
         kernel_regularizer=keras.regularizers.l2(0.01),
         use_gated=True,
         name="alpha",
@@ -683,6 +696,7 @@ model = create_model(
     num_classes=tr_bags_labels[0].shape[-1],
     instance_shape=tr_bags[0][0].shape[-1],
     bag_size=len(tr_bags),
+    shared_MIL_encoding_dim=128,
 )
 model.summary()
 # %% COMPILE MODEL
@@ -694,27 +708,11 @@ learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
     step_size=2 * len(tr_bags),
 )
 
-if args_dict["OPTIMIZER"] == "SGD":
-    print(f'{" "*6}Using SGD optimizer.')
-    optimizer = tf.keras.optimizers.SGD(
-        learning_rate=learning_rate_fn
-        if learning_rate_fn
-        else args_dict["LEARNING_RATE"],
-        decay=1e-6,
-        momentum=0.9,
-        nesterov=True,
-        clipvalue=0.5,
-    )
-
-elif args_dict["OPTIMIZER"] == "ADAM":
-    print(f'{" "*6}Using AdamW optimizer.')
-
-    optimizer = tfa.optimizers.AdamW(
-        learning_rate=learning_rate_fn
-        if learning_rate_fn
-        else args_dict["LEARNING_RATE"],
-        weight_decay=0.0001,
-    )
+print(f'{" "*6}Using AdamW optimizer.')
+optimizer = tfa.optimizers.AdamW(
+    learning_rate=learning_rate_fn if learning_rate_fn else args_dict["LEARNING_RATE"],
+    weight_decay=0.0001,
+)
 
 # wrap using LookAhead which helps smoothing out validation curves
 optimizer = Lookahead(optimizer, sync_period=5, slow_step_size=0.5)
@@ -755,65 +753,96 @@ model.compile(
     ],
 )
 
+best_model_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights", "")
+Path(best_model_path).mkdir(parents=True, exist_ok=True)
+
+importlib.reload(tf_callbacks)
+callbacks_list = [
+    tf_callbacks.SaveBestModelWeights(
+        save_path=best_model_path, monitor="val_loss", mode="min"
+    ),
+    # model_checkpoint_callback,
+    tf_callbacks.LossAndErrorPrintingCallback(
+        save_path=args_dict["SAVE_PATH"], print_every_n_epoch=5
+    ),
+]
+# save training configuration (right before training to account for the changes made in the meantime)
+args_dict["OPTIMIZER"] = str(type(optimizer))
+args_dict["LOSS_TYPE"] = str(type(loss))
+args_dict["LEARNING_SCHEDULER"] = str(
+    (type(learning_rate_fn) if learning_rate_fn else "constant")
+)
+
+with open(os.path.join(args_dict["SAVE_PATH"], "config.json"), "w") as config_file:
+    config_file.write(json.dumps(args_dict))
+
+
 # %% TRAIN MODEL
 import tqdm
 
 
-def train(train_data, train_labels, val_data, val_labels, model, config):
+# Initialize model checkpoint callback.
+best_model_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights", "")
+Path(best_model_path).mkdir(parents=True, exist_ok=True)
 
-    # Train model.
-    # Prepare callbacks.
-    # Path where to save best weights.
-
-    # Take the file name from the wrapper.
-    file_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights.h5")
-
-    # Initialize model checkpoint callback.
-    model_checkpoint = keras.callbacks.ModelCheckpoint(
-        file_path,
-        monitor="val_loss",
-        verbose=0,
-        mode="min",
-        save_best_only=True,
-        save_weights_only=True,
-    )
-
-    # Initialize early stopping callback.
-    # The model performance is monitored across the validation data and stops training
-    # when the generalization error cease to decrease.
-    early_stopping = keras.callbacks.EarlyStopping(
-        monitor="val_loss", patience=10, mode="min"
-    )
-
-    # Compile model.
-    model.compile(
-        optimizer="adam",
-        loss="categorical_crossentropy",
-        metrics=["accuracy"],
-    )
-
-    # Fit model.
-    model.fit(
-        train_data,
-        train_labels,
-        validation_data=(val_data, val_labels),
-        epochs=max_epochs,
-        batch_size=1,
-        callbacks=[early_stopping, model_checkpoint],
-        verbose=1,
-        class_weight=config["CLASS_WEIGHTS"],
-    )
-
-    # Load best weights.
-    model.load_weights(file_path)
-
-    return model
-
-
-# Training model(s).
-trained_models = [
-    train(tr_bags, tr_bags_labels, tr_bags, tr_bags_labels, model, config)
+callbacks_list = [
+    tf_callbacks.SaveBestModelWeights(
+        save_path=best_model_path, monitor="val_loss", mode="min"
+    ),
+    # model_checkpoint_callback,
+    tf_callbacks.LossAndErrorPrintingCallback(
+        save_path=args_dict["SAVE_PATH"], print_every_n_epoch=5
+    ),
 ]
+
+history = model.fit(
+    tr_bags,
+    tr_bags_labels,
+    validation_data=(test_bags, test_bags_labels),
+    epochs=150,
+    batch_size=32,
+    callbacks=callbacks_list,
+    verbose=1,
+    class_weight=config["CLASS_WEIGHTS"],
+)
+
+model.load_weights(best_model_path)
+
+# save last training curves
+print(f'{" "*6}Saving training curves and tabular evaluation data...')
+fig, ax = plt.subplots(
+    figsize=(20, 15),
+    nrows=3 if history.history["MatthewsCorrelationCoefficient"] else 2,
+    ncols=1,
+)
+# print training loss
+ax[0].plot(history.history["loss"], label="training loss")
+ax[0].plot(history.history["val_loss"], label="validation loss")
+ax[0].set_title(f"Train and validation loss")
+ax[0].legend()
+# print training accuracy
+ax[1].plot(history.history["accuracy"], label="training accuracy")
+ax[1].plot(history.history["val_accuracy"], label="validation accuracy")
+ax[1].set_title("Train and Validation accuracy")
+# ax[1].set_title(
+#     f'Test accuracy -> (last)  {summary_test[str(cv_f+1)]["last"]["overall_accuracy"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["overall_accuracy"]:0.3f}'
+# )
+ax[1].legend()
+
+# print training MCC
+if history.history["MatthewsCorrelationCoefficient"]:
+    ax[2].plot(history.history["MatthewsCorrelationCoefficient"], label="training MCC")
+    ax[2].plot(
+        history.history["val_MatthewsCorrelationCoefficient"],
+        label="validation MCC",
+    )
+    ax[2].set_title("Train and Validation MCC")
+    # ax[2].set_title(
+    #     f'Test MCC -> (last)  {summary_test[str(cv_f+1)]["last"]["matthews_correlation_coefficient"]:0.3f}, (best) {summary_test[str(cv_f+1)]["best"]["matthews_correlation_coefficient"]:0.3f}'
+    # )
+    ax[2].legend()
+
+fig.savefig(os.path.join(args_dict["SAVE_PATH"], "training_curves.png"))
 
 # %% EVALUATION
 def predict(data, labels, trained_models):
@@ -856,7 +885,9 @@ def predict(data, labels, trained_models):
 
 # Evaluate and predict classes and attention scores on validation data.
 ENSEMBLE_AVG_COUNT = 1
-class_predictions, attention_params = predict(test_bags, test_bags_labels, trained_models)
+class_predictions, attention_params = predict(
+    test_bags, test_bags_labels, trained_models
+)
 
 plot(
     bags_labels=test_bags_labels,
@@ -868,19 +899,19 @@ plot(
 )
 
 utilities.plotConfusionMatrix(
-                    GT=np.array(test_bags_labels),
-                    PRED=class_predictions,
-                    classes=["Not_tumor", "Tumor"]
-                    if config["NBR_CLASSES"] == 2
-                    else (
-                        ["ASTR", "EP", "MED"]
-                        if config["NBR_CLASSES"] == 3
-                        else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
-                    ),
-                    savePath=None,
-                    saveName=None,
-                    draw=True,
-                )
+    GT=np.array(test_bags_labels),
+    PRED=class_predictions,
+    classes=["Not_tumor", "Tumor"]
+    if config["NBR_CLASSES"] == 2
+    else (
+        ["ASTR", "EP", "MED"]
+        if config["NBR_CLASSES"] == 3
+        else ["ASTR_in", "ASTR_su", "EP_in", "EP_su", "MED_in"]
+    ),
+    savePath=None,
+    saveName=None,
+    draw=True,
+)
 # %% FROM KERAS IMPLEMENTATION
 POSITIVE_CLASS = 1
 BAG_COUNT = 500

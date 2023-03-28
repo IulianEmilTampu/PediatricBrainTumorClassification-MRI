@@ -346,6 +346,12 @@ def SimpleDetectionModel_TF(
         # work on age encoder
         a = enc_age
         if age_encoder_version == "no_encoder":
+            x = Dense(
+                units=num_classes,
+                activation=denseActivation,
+                kernel_regularizer=denseRegularizer,
+                kernel_constraint=denseConstrain,
+            )(x)
             x = tf.keras.layers.concatenate([x, a])
         else:
             if age_encoder_version == "simple_age_encoder":

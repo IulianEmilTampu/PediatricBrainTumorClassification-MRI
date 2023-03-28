@@ -271,67 +271,68 @@ if not su_debug_flag:
 
 else:
     # # # # # # # # # # # # # # DEBUG
-    # args_dict = {
-    #     "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-    #     "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
-    #     # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
-    #     "DATASET_TYPE": "CBTN",
-    #     "NBR_CLASSES": 3,
-    #     "GPU_NBR": "0",
-    #     "NBR_FOLDS": 1,
-    #     "LEARNING_RATE": 0.0001,
-    #     "BATCH_SIZE": 32,
-    #     "MAX_EPOCHS": 2,
-    #     "DATA_AUGMENTATION": True,
-    #     "DATA_NORMALIZATION": True,
-    #     "DATA_SCALE": True,
-    #     "USE_PRETRAINED_MODEL": False,
-    #     "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
-    #     "FREEZE_WEIGHTS": True,
-    #     "USE_AGE": True,
-    #     "AGE_NORMALIZATION": True,
-    #     "AGE_ENCODER_VERSION": "simple_age_encoder",
-    #     "USE_GRADCAM": False,
-    #     "LOSS": "MCC_and_CCE_Loss",
-    #     "RANDOM_SEED_NUMBER": 1111,
-    #     "MR_MODALITIES": ["T2"],
-    #     "DEBUG_DATASET_FRACTION": 1,
-    #     "TFR_DATA": True,
-    #     "MODEL_TYPE": "SDM4",
-    #     "MODEL_NAME": "TTTTTTTTTT",
-    #     "OPTIMIZER": "ADAM",
-    # }
-
-    args_dict = {
-        "WORKING_FOLDER": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification",
-        "IMG_DATASET_FOLDER": r"C:\Datasets\CBTN\EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
-        # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
-        "DATASET_TYPE": "CBTN",
-        "NBR_CLASSES": 3,
-        "GPU_NBR": "0",
-        "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.0001,
-        "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 50,
-        "DATA_AUGMENTATION": True,
-        "DATA_NORMALIZATION": True,
-        "DATA_SCALE": True,
-        "USE_PRETRAINED_MODEL": False,
-        "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
-        "FREEZE_WEIGHTS": True,
-        "USE_AGE": True,
-        "AGE_NORMALIZATION": True,
-        "AGE_ENCODER_VERSION": "no_encoder",
-        "USE_GRADCAM": False,
-        "LOSS": "MCC_and_CCE_Loss",
-        "RANDOM_SEED_NUMBER": 1111,
-        "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 1,
-        "TFR_DATA": True,
-        "MODEL_TYPE": "SDM4",
-        "MODEL_NAME": "TEST",
-        "OPTIMIZER": "ADAM",
-    }
+    if os.name == "posix":
+        args_dict = {
+            "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
+            "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+            # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
+            "DATASET_TYPE": "CBTN",
+            "NBR_CLASSES": 3,
+            "GPU_NBR": "0",
+            "NBR_FOLDS": 1,
+            "LEARNING_RATE": 0.0001,
+            "BATCH_SIZE": 32,
+            "MAX_EPOCHS": 75,
+            "DATA_AUGMENTATION": False,
+            "DATA_NORMALIZATION": True,
+            "DATA_SCALE": True,
+            "USE_PRETRAINED_MODEL": False,
+            "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
+            "FREEZE_WEIGHTS": True,
+            "USE_AGE": False,
+            "AGE_NORMALIZATION": True,
+            "AGE_ENCODER_VERSION": "simple_age_encoder",
+            "USE_GRADCAM": False,
+            "LOSS": "MCC_and_CCE_Loss",
+            "RANDOM_SEED_NUMBER": 1111,
+            "MR_MODALITIES": ["T2"],
+            "DEBUG_DATASET_FRACTION": 1,
+            "TFR_DATA": True,
+            "MODEL_TYPE": "SDM4",
+            "MODEL_NAME": "TEST_OVERSAMPLING_EP",
+            "OPTIMIZER": "ADAM",
+        }
+    else:
+        args_dict = {
+            "WORKING_FOLDER": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification",
+            "IMG_DATASET_FOLDER": r"C:\Datasets\CBTN\EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+            # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
+            "DATASET_TYPE": "CBTN",
+            "NBR_CLASSES": 3,
+            "GPU_NBR": "0",
+            "NBR_FOLDS": 1,
+            "LEARNING_RATE": 0.0001,
+            "BATCH_SIZE": 32,
+            "MAX_EPOCHS": 50,
+            "DATA_AUGMENTATION": True,
+            "DATA_NORMALIZATION": True,
+            "DATA_SCALE": True,
+            "USE_PRETRAINED_MODEL": False,
+            "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
+            "FREEZE_WEIGHTS": True,
+            "USE_AGE": True,
+            "AGE_NORMALIZATION": True,
+            "AGE_ENCODER_VERSION": "no_encoder",
+            "USE_GRADCAM": False,
+            "LOSS": "MCC_and_CCE_Loss",
+            "RANDOM_SEED_NUMBER": 1111,
+            "MR_MODALITIES": ["T2"],
+            "DEBUG_DATASET_FRACTION": 1,
+            "TFR_DATA": True,
+            "MODEL_TYPE": "SDM4",
+            "MODEL_NAME": "TEST_OVERSAMPLING_EP",
+            "OPTIMIZER": "ADAM",
+        }
 
 # revise model name
 args_dict[
@@ -465,6 +466,13 @@ if not all([args_dict["NBR_CLASSES"] == 2, args_dict["DATASET_TYPE"] == "BRATS"]
 else:
     for c in range(args_dict["NBR_CLASSES"]):
         args_dict["CLASS_WEIGHTS"][c] = 1
+
+
+# OVERSAMPLING THE EP class
+random.seed(args_dict["RANDOM_SEED_NUMBER"])
+EP_samples = [i for i in subj_train_val_idx if i[1] == 1]
+subj_train_val_idx.extend(random.choices(EP_samples, k=50))
+subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []

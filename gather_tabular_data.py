@@ -38,7 +38,7 @@ if not su_debug_flag:
 else:
     print("Running in debug mode.")
     args_dict = {
-        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Classification_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_True_large_age_encoder_useGradCAM_False",
+        "PATH_TO_MODELS": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Classification_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_None_useGradCAM_False",
     }
 
 args_dict["SAVE_PATH"] = os.path.join(
@@ -151,11 +151,7 @@ grouped = df_all_patient_level.groupby(["aggregation_method", "model_type"])
 
 # Calculate the mean and standard deviation for the relevant performance metrics
 metrics = [
-    "precision",
-    "recall",
     "accuracy",
-    "f1-score",
-    "auc",
     "matthews_correlation_coefficient",
 ]
 
@@ -171,5 +167,6 @@ mean_std = pd.concat([mean, std], ignore_index=True)
 
 # Save the mean and standard deviation results to a CSV file
 mean_std.to_csv(
-    os.path.join(args_dict["SAVE_PATH"], f"{df_name}_per_SUBJECT.csv"), index=False
+    os.path.join(args_dict["SAVE_PATH"], "summary_mean_std_per_subject.csv"),
+    index=False,
 )

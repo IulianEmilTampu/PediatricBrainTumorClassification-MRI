@@ -180,26 +180,48 @@ if not su_debug_flag:
     args_dict = dict(vars(parser.parse_args()))
 
 else:
-    args_dict = {
-        "WORKING_FOLDER": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification",
-        "IMG_DATASET_FOLDER": r"C:\Datasets\CBTN\EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
-        "MR_MODALITIES": ["T2"],
-        "GPU_NBR": "0",
-        "NBR_FOLDS": 1,
-        "LEARNING_RATE": 0.0001,
-        "BATCH_SIZE": 32,
-        "MAX_EPOCHS": 50,
-        "PATH_TO_ENCODER_MODEL": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4\fold_2\last_model\last_model",
-        "PATH_TO_CONFIGURATION_FILES": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4",
-        "MIL_USE_AGE": True,
-        "AGE_NORMALIZATION": True,
-        "LOSS": "MCC_and_CCE_Loss",
-        "RANDOM_SEED_NUMBER": 1111,
-        "MR_MODALITIES": ["T2"],
-        "DEBUG_DATASET_FRACTION": 1,
-        "MODEL_NAME": "MIL_TEST",
-        "OPTIMIZER": "ADAM",
-    }
+    if os.name == "posix":
+        args_dict = {
+            "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
+            "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+            "MR_MODALITIES": ["T2"],
+            "GPU_NBR": "0",
+            "NBR_FOLDS": 1,
+            "LEARNING_RATE": 0.0001,
+            "BATCH_SIZE": 32,
+            "MAX_EPOCHS": 50,
+            "PATH_TO_ENCODER_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_LONG_RUN_CLR_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_useGradCAM_False_seed_1111/fold_1/last_model/last_model",
+            "PATH_TO_CONFIGURATION_FILES": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_LONG_RUN_CLR_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_useGradCAM_False_seed_1111",
+            "MIL_USE_AGE": True,
+            "AGE_NORMALIZATION": True,
+            "LOSS": "MCC_and_CCE_Loss",
+            "RANDOM_SEED_NUMBER": 1111,
+            "MR_MODALITIES": ["T2"],
+            "DEBUG_DATASET_FRACTION": 1,
+            "MODEL_NAME": "MIL_TEST",
+            "OPTIMIZER": "ADAM",
+        }
+    else:
+        args_dict = {
+            "WORKING_FOLDER": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification",
+            "IMG_DATASET_FOLDER": r"C:\Datasets\CBTN\EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+            "MR_MODALITIES": ["T2"],
+            "GPU_NBR": "0",
+            "NBR_FOLDS": 1,
+            "LEARNING_RATE": 0.0001,
+            "BATCH_SIZE": 32,
+            "MAX_EPOCHS": 50,
+            "PATH_TO_ENCODER_MODEL": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4\fold_2\last_model\last_model",
+            "PATH_TO_CONFIGURATION_FILES": r"C:\Users\iulta54\Documents\PediatricBrainTumorClassification\trained_models_archive\SDM4",
+            "MIL_USE_AGE": True,
+            "AGE_NORMALIZATION": True,
+            "LOSS": "MCC_and_CCE_Loss",
+            "RANDOM_SEED_NUMBER": 1111,
+            "MR_MODALITIES": ["T2"],
+            "DEBUG_DATASET_FRACTION": 1,
+            "MODEL_NAME": "MIL_TEST",
+            "OPTIMIZER": "ADAM",
+        }
 
 # revise model name
 args_dict[
@@ -408,12 +430,13 @@ def get_subject_bag_enc(
     return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
 
 
-# get the actual subject bags of instances for each subject
+# TRAIN DATA
 tr_bags, tr_bags_labels, tr_bags_images = [], [], []
+bag_size = 30
 for idx, subject_files in enumerate(tr_val_per_subjects_files.values()):
-    print(f"Working on subject {idx+1:} of {len(tr_val_per_subjects_files)}")
+    print(f"Working on subject {idx+1:} of {len(tr_val_per_subjects_files)}\r", end="")
     (bag, labels), images = get_subject_bag_enc(
-        subject_files, enc_model, config, bag_size=10
+        subject_files, enc_model, config, bag_size=bag_size
     )
     tr_bags.append(bag)
     tr_bags_labels.append(labels)
@@ -421,12 +444,18 @@ for idx, subject_files in enumerate(tr_val_per_subjects_files.values()):
     # if idx + 1 == 15:
     #     break
 
-# get the actual subject bags of instances for each subject
+random.seed(20091229)
+zipped = list(zip(tr_bags, tr_bags_labels, tr_bags_images))
+random.shuffle(zipped)
+tr_bags, tr_bags_labels, tr_bags_images = zip(*zipped)
+
+# TEST DATA
 test_bags, test_bags_labels, test_bags_images = [], [], []
+
 for idx, subject_files in enumerate(test_per_subjects_files.values()):
-    print(f"Working on subject {idx+1:} of {len(test_per_subjects_files)}")
+    print(f"Working on subject {idx+1:} of {len(test_per_subjects_files)}\r", end="")
     (bag, labels), images = get_subject_bag_enc(
-        subject_files, enc_model, config, bag_size=10
+        subject_files, enc_model, config, bag_size=bag_size
     )
     test_bags.append(bag)
     test_bags_labels.append(labels)
@@ -454,6 +483,7 @@ else:
 # reshape to have the bag dimension as first element and the number of bags as second element (from keras implementation)
 tr_bags = list(np.swapaxes(tr_bags, 0, 1))
 test_bags = list(np.swapaxes(test_bags, 0, 1))
+
 # make labels to be a np array
 tr_bags_labels = np.array(tr_bags_labels)
 test_bags_labels = np.array(test_bags_labels)
@@ -478,7 +508,7 @@ print(f"Shape of first element labels: {tr_bags_labels[0].shape}")
 print(f"Type of labels: {type(tr_bags_labels[0])}")
 
 # %% SOME PLOTTING
-plot_bags = False
+plot_bags = True
 
 
 def plot(
@@ -653,20 +683,48 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         # w^T*(tanh(v*h_k^T)) / w^T*(tanh(v*h_k^T)*sigmoid(u*h_k^T))
         return tf.tensordot(instance, self.w_weight_params, axes=1)
 
+    def get_config(self):
+
+        config = super().get_config().copy()
+        config.update(
+            {
+                "weight_params_dim": self.weight_params_dim,
+                "kernel_initializer": self.kernel_initializer,
+                "kernel_regularizer": self.kernel_regularizer,
+                "use_gated": self.use_gated,
+            }
+        )
+        return config
+
 
 # %% MIL MODEL
 def create_model(
     num_classes, instance_shape, shared_MIL_encoding_dim: int = 128, bag_size: int = 25
 ):
+    denseDropoutRate = 0.2
+    denseRegularizer = "L2"
+    denseConstrain = None
 
     # Extract features from inputs.
     inputs, embeddings = [], []
-    shared_dense_layer_1 = layers.Dense(128, activation="relu")
-    shared_dense_layer_2 = layers.Dense(64, activation="relu")
+    shared_dense_layer_1 = layers.Dense(
+        265,
+        activation="relu",
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+    )
+    shared_dense_layer_2 = layers.Dense(
+        128,
+        activation="relu",
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+    )
     for _ in range(bag_size):
         inp = layers.Input(instance_shape)
         dense_1 = shared_dense_layer_1(inp)
+        dense_1 = tf.keras.layers.Dropout(denseDropoutRate)(dense_1)
         dense_2 = shared_dense_layer_2(dense_1)
+        dense_2 = tf.keras.layers.Dropout(denseDropoutRate)(dense_2)
         inputs.append(inp)
         embeddings.append(dense_2)
 
@@ -696,14 +754,15 @@ model = create_model(
     num_classes=tr_bags_labels[0].shape[-1],
     instance_shape=tr_bags[0][0].shape[-1],
     bag_size=len(tr_bags),
-    shared_MIL_encoding_dim=128,
+    shared_MIL_encoding_dim=64,
 )
-model.summary()
-# %% COMPILE MODEL
+# model.summary()
+
+# ############################### COMPILE MODEL
 
 learning_rate_fn = tfa.optimizers.CyclicalLearningRate(
-    initial_learning_rate=1e-2,
-    maximal_learning_rate=1e-1,
+    initial_learning_rate=1e-5,
+    maximal_learning_rate=1e-4,
     scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
     step_size=2 * len(tr_bags),
 )
@@ -777,9 +836,8 @@ with open(os.path.join(args_dict["SAVE_PATH"], "config.json"), "w") as config_fi
     config_file.write(json.dumps(args_dict))
 
 
-# %% TRAIN MODEL
+# ############################### TRAIN MODEL
 import tqdm
-
 
 # Initialize model checkpoint callback.
 best_model_path = os.path.join(args_dict["SAVE_PATH"], "best_model_weights", "")
@@ -791,7 +849,7 @@ callbacks_list = [
     ),
     # model_checkpoint_callback,
     tf_callbacks.LossAndErrorPrintingCallback(
-        save_path=args_dict["SAVE_PATH"], print_every_n_epoch=5
+        save_path=args_dict["SAVE_PATH"], print_every_n_epoch=15
     ),
 ]
 
@@ -800,13 +858,13 @@ history = model.fit(
     tr_bags_labels,
     validation_data=(test_bags, test_bags_labels),
     epochs=150,
-    batch_size=32,
+    batch_size=4,
     callbacks=callbacks_list,
     verbose=1,
-    class_weight=config["CLASS_WEIGHTS"],
+    class_weight=args_dict["CLASS_WEIGHTS"],
 )
 
-model.load_weights(best_model_path)
+model.load_weights(os.path.join(best_model_path, "best_model"))
 
 # save last training curves
 print(f'{" "*6}Saving training curves and tabular evaluation data...')
@@ -868,14 +926,12 @@ def predict(data, labels, trained_models):
         attention_weights = np.squeeze(np.swapaxes(intermediate_predictions, 1, 0))
         models_attention_weights.append(attention_weights)
 
-        loss, accuracy = model.evaluate(data, labels, verbose=0)
-        models_losses.append(loss)
-        models_accuracies.append(accuracy)
+        model.evaluate(data, labels, verbose=0)
 
-    print(
-        f"The average loss and accuracy are {np.sum(models_losses, axis=0) / ENSEMBLE_AVG_COUNT:.2f}"
-        f" and {100 * np.sum(models_accuracies, axis=0) / ENSEMBLE_AVG_COUNT:.2f} % resp."
-    )
+    # print(
+    #     f"The average loss and accuracy are {np.sum(models_losses, axis=0) / ENSEMBLE_AVG_COUNT:.2f}"
+    #     f" and {100 * np.sum(models_accuracies, axis=0) / ENSEMBLE_AVG_COUNT:.2f} % resp."
+    # )
 
     return (
         np.sum(models_predictions, axis=0) / ENSEMBLE_AVG_COUNT,
@@ -885,9 +941,7 @@ def predict(data, labels, trained_models):
 
 # Evaluate and predict classes and attention scores on validation data.
 ENSEMBLE_AVG_COUNT = 1
-class_predictions, attention_params = predict(
-    test_bags, test_bags_labels, trained_models
-)
+class_predictions, attention_params = predict(test_bags, test_bags_labels, [model])
 
 plot(
     bags_labels=test_bags_labels,

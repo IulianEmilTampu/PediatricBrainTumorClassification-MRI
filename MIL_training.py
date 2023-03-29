@@ -189,9 +189,9 @@ else:
             "NBR_FOLDS": 1,
             "LEARNING_RATE": 0.0001,
             "BATCH_SIZE": 32,
-            "MAX_EPOCHS": 50,
-            "PATH_TO_ENCODER_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_LONG_RUN_CLR_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_useGradCAM_False_seed_1111/fold_1/last_model/last_model",
-            "PATH_TO_CONFIGURATION_FILES": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_LONG_RUN_CLR_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_useGradCAM_False_seed_1111",
+            "MAX_EPOCHS": 150,
+            "PATH_TO_ENCODER_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_OVERSAMPLING_EP_with_AUG_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_simple_age_encoder_useGradCAM_False_seed_1111/fold_5/best_model_weights/best_model",
+            "PATH_TO_CONFIGURATION_FILES": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_OVERSAMPLING_EP_with_AUG_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_simple_age_encoder_useGradCAM_False_seed_1111",
             "MIL_USE_AGE": True,
             "AGE_NORMALIZATION": True,
             "LOSS": "MCC_and_CCE_Loss",
@@ -355,6 +355,7 @@ def get_subject_bag_enc(
     config_file,
     bag_size: int = 5,
     random_seed: int = 20091229,
+    sort_by_location: bool = False,
 ):
     """
     Given a list of files, the encoding model and the configuration file which was used to train the
@@ -365,6 +366,44 @@ def get_subject_bag_enc(
     - encode the images
     - aggregate in one bag
     """
+    if sort_by_location:
+        # sort file names based on the location (from the center of the tumor)
+        slice_position_index = -3
+        slice_position = [
+            int(Path(os.path.basename(f)).stem.split("_")[slice_position_index])
+            for f in subject_file_paths
+        ]
+        # adapt to have the slices with relative position ~50 to be the first ones
+        slice_position = np.abs(np.array(slice_position) - 50)
+        sorted_slices = np.argsort(slice_position)
+        subject_file_paths = [subject_file_paths[i] for i in sorted_slices]
+
+    # fix the bag size (work on the files before creating the generator and predicting)
+    np.random.seed(random_seed)
+    if len(subject_file_paths) < bag_size:
+        for i in range(bag_size - len(subject_file_paths)):
+            if sort_by_location:
+                # replicate more of the central (first) slices
+                slice_index = i
+            else:
+                # randomly oversample to get the right number of instantces for the bag
+                slice_index = np.random.randint(len(subject_file_paths))
+            subject_file_paths.append(subject_file_paths[slice_index])
+    elif len(subject_file_paths) > bag_size:
+        aus_subject_file_paths = []
+        if sort_by_location:
+            # replicate more of the central (first) slices
+            slice_index = range(bag_size)
+        else:
+            # randomly oversample to get the right number of instantces for the bag
+            slice_index = np.random.randint(
+                enc_images.shape[0],
+                size=bag_size,
+            )
+        for idx in slice_index:
+            aus_subject_file_paths.append(subject_file_paths[idx])
+
+        subject_file_paths = aus_subject_file_paths
 
     # build generator
     target_size = (224, 224)
@@ -394,55 +433,27 @@ def get_subject_bag_enc(
     # for each image get the encoded version using the encoding model
     enc_images = enc_model.predict(sample[0], verbose=0)
 
-    # fix the bag size based on the specifications
-    np.random.seed(random_seed)
-    if enc_images.shape[0] < bag_size:
-        # randomly oversample to get the right number of instantces for the bag
-        for i in range(bag_size - enc_images.shape[0]):
-            random_idx = np.random.randint(enc_images.shape[0])
-            enc_images = np.concatenate(
-                [
-                    enc_images,
-                    np.expand_dims(enc_images[random_idx], axis=0),
-                ]
-            )
-
-            bag_imgs = np.concatenate(
-                [
-                    bag_imgs,
-                    np.expand_dims(bag_imgs[random_idx], axis=0),
-                ]
-            )
-
-    if enc_images.shape[0] > bag_size:
-        aus_enc_images, aus_bag_imgs = [], []
-        random_idx = np.random.randint(
-            enc_images.shape[0],
-            size=bag_size,
-        )
-        for idx in random_idx:
-            aus_enc_images.append(enc_images[idx])
-            aus_bag_imgs.append(bag_imgs[idx])
-        # bring to the right shape
-        enc_images = np.stack(aus_enc_images)
-        bag_imgs = np.stack(aus_bag_imgs)
-
     return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
 
 
 # TRAIN DATA
 tr_bags, tr_bags_labels, tr_bags_images = [], [], []
 bag_size = 30
+sort_by_location = True
 for idx, subject_files in enumerate(tr_val_per_subjects_files.values()):
     print(f"Working on subject {idx+1:} of {len(tr_val_per_subjects_files)}\r", end="")
     (bag, labels), images = get_subject_bag_enc(
-        subject_files, enc_model, config, bag_size=bag_size
+        subject_files,
+        enc_model,
+        config,
+        bag_size=bag_size,
+        sort_by_location=sort_by_location,
     )
     tr_bags.append(bag)
     tr_bags_labels.append(labels)
     tr_bags_images.append(images)
-    # if idx + 1 == 15:
-    #     break
+    if idx + 1 == 15:
+        break
 
 random.seed(20091229)
 zipped = list(zip(tr_bags, tr_bags_labels, tr_bags_images))
@@ -455,7 +466,11 @@ test_bags, test_bags_labels, test_bags_images = [], [], []
 for idx, subject_files in enumerate(test_per_subjects_files.values()):
     print(f"Working on subject {idx+1:} of {len(test_per_subjects_files)}\r", end="")
     (bag, labels), images = get_subject_bag_enc(
-        subject_files, enc_model, config, bag_size=bag_size
+        subject_files,
+        enc_model,
+        config,
+        bag_size=bag_size,
+        sort_by_location=sort_by_location,
     )
     test_bags.append(bag)
     test_bags_labels.append(labels)

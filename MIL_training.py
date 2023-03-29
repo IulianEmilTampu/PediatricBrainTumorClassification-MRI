@@ -349,141 +349,50 @@ enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
 # enc_model.summary()
 
 # %% GET TRAINING BAGS (ONE BAG FOR EACH SUBJECT)
-def get_subject_bag_enc(
-    subject_file_paths,
-    enc_model,
-    config_file,
-    bag_size: int = 5,
-    random_seed: int = 20091229,
-    sort_by_location: bool = False,
-):
-    """
-    Given a list of files, the encoding model and the configuration file which was used to train the
-    encoder model, returns a numpy array with size [bag_size, enc_dim] containing the encodings of the subject images.
+importlib.reload(data_utilities)
 
-    Steps:
-    - create generator to consume the subject files
-    - encode the images
-    - aggregate in one bag
-    """
-    if sort_by_location:
-        # sort file names based on the location (from the center of the tumor)
-        slice_position_index = -3
-        slice_position = [
-            int(Path(os.path.basename(f)).stem.split("_")[slice_position_index])
-            for f in subject_file_paths
-        ]
-        # adapt to have the slices with relative position ~50 to be the first ones
-        slice_position = np.abs(np.array(slice_position) - 50)
-        sorted_slices = np.argsort(slice_position)
-        subject_file_paths = [subject_file_paths[i] for i in sorted_slices]
-
-    # fix the bag size (work on the files before creating the generator and predicting)
-    np.random.seed(random_seed)
-    if len(subject_file_paths) < bag_size:
-        for i in range(bag_size - len(subject_file_paths)):
-            if sort_by_location:
-                # replicate more of the central (first) slices
-                slice_index = i
-            else:
-                # randomly oversample to get the right number of instantces for the bag
-                slice_index = np.random.randint(len(subject_file_paths))
-            subject_file_paths.append(subject_file_paths[slice_index])
-    elif len(subject_file_paths) > bag_size:
-        aus_subject_file_paths = []
-        if sort_by_location:
-            # replicate more of the central (first) slices
-            slice_index = range(bag_size)
-        else:
-            # randomly oversample to get the right number of instantces for the bag
-            slice_index = np.random.randint(
-                enc_images.shape[0],
-                size=bag_size,
-            )
-        for idx in slice_index:
-            aus_subject_file_paths.append(subject_file_paths[idx])
-
-        subject_file_paths = aus_subject_file_paths
-
-    # build generator
-    target_size = (224, 224)
-    img_gen, _ = data_utilities.tfrs_data_generator(
-        file_paths=subject_file_paths,
-        input_size=target_size,
-        batch_size=len(subject_file_paths),
-        buffer_size=10,
-        return_gradCAM=config_file["USE_GRADCAM"],
-        return_age=config_file["USE_AGE"],
-        dataset_type="test",
-        nbr_classes=config_file["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                config_file["MODEL_TYPE"] == "EfficientNet",
-                config_file["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
-    )
-
-    # get out samples from the generator
-    sample = next(iter(img_gen))
-    bag_imgs, bag_label = sample[0]["image"].numpy(), sample[1][0].numpy()
-
-    # for each image get the encoded version using the encoding model
-    enc_images = enc_model.predict(sample[0], verbose=0)
-
-    return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
-
-
-# TRAIN DATA
-tr_bags, tr_bags_labels, tr_bags_images = [], [], []
 bag_size = 30
-sort_by_location = True
-for idx, subject_files in enumerate(tr_val_per_subjects_files.values()):
-    print(f"Working on subject {idx+1:} of {len(tr_val_per_subjects_files)}\r", end="")
-    (bag, labels), images = get_subject_bag_enc(
-        subject_files,
-        enc_model,
-        config,
-        bag_size=bag_size,
-        sort_by_location=sort_by_location,
-    )
-    tr_bags.append(bag)
-    tr_bags_labels.append(labels)
-    tr_bags_images.append(images)
-    if idx + 1 == 15:
-        break
+sort_by_slice_location = True
+shuffle_samples_in_bag = False
 
-random.seed(20091229)
-zipped = list(zip(tr_bags, tr_bags_labels, tr_bags_images))
-random.shuffle(zipped)
-tr_bags, tr_bags_labels, tr_bags_images = zip(*zipped)
+# Training data
+(
+    train_bags,
+    train_bags_labels,
+    train_bags_imgs,
+) = data_utilities.get_train_data_MIL_model(
+    per_subject_files_dict=tr_val_per_subjects_files,
+    sample_encoder_model=enc_model,
+    data_gen_configuration_dict=config,
+    bag_size=bag_size,
+    sort_by_slice_location=sort_by_slice_location,
+    shuffle_samples_in_bag=shuffle_samples_in_bag,
+    debug_number_of_bags=None,
+    rnd_seed=args_dict["RANDOM_SEED_NUMBER"],
+)
 
-# TEST DATA
-test_bags, test_bags_labels, test_bags_images = [], [], []
-
-for idx, subject_files in enumerate(test_per_subjects_files.values()):
-    print(f"Working on subject {idx+1:} of {len(test_per_subjects_files)}\r", end="")
-    (bag, labels), images = get_subject_bag_enc(
-        subject_files,
-        enc_model,
-        config,
-        bag_size=bag_size,
-        sort_by_location=sort_by_location,
-    )
-    test_bags.append(bag)
-    test_bags_labels.append(labels)
-    test_bags_images.append(images)
-    # if idx + 1 == 15:
-    #     break
+# Testing data
+(
+    test_bags,
+    test_bags_labels,
+    test_bags_imgs,
+) = data_utilities.get_train_data_MIL_model(
+    per_subject_files_dict=tr_val_per_subjects_files,
+    sample_encoder_model=enc_model,
+    data_gen_configuration_dict=config,
+    bag_size=bag_size,
+    sort_by_slice_location=sort_by_slice_location,
+    shuffle_samples_in_bag=shuffle_samples_in_bag,
+    debug_number_of_bags=None,
+    rnd_seed=args_dict["RANDOM_SEED_NUMBER"],
+)
 
 # compute class weights on the training data
 class_weights_values = list(
-    np.sum(np.bincount(np.array(tr_bags_labels).argmax(axis=-1)))
+    np.sum(np.bincount(np.array(train_bags_labels).argmax(axis=-1)))
     / (
-        len(np.bincount(np.array(tr_bags_labels).argmax(axis=-1)))
-        * np.bincount(np.array(tr_bags_labels).argmax(axis=-1))
+        len(np.bincount(np.array(train_bags_labels).argmax(axis=-1)))
+        * np.bincount(np.array(train_bags_labels).argmax(axis=-1))
     )
 )
 
@@ -495,32 +404,17 @@ else:
     for c in range(args_dict["NBR_CLASSES"]):
         args_dict["CLASS_WEIGHTS"][c] = 1
 
-# reshape to have the bag dimension as first element and the number of bags as second element (from keras implementation)
-tr_bags = list(np.swapaxes(tr_bags, 0, 1))
-test_bags = list(np.swapaxes(test_bags, 0, 1))
+# print some information about the bags
+for bags, bags_labels, dataset_name in zip(
+    [train_bags, test_bags], [train_bags_labels, test_bags_labels], ["train", "test"]
+):
+    print("¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤¤")
+    print(f"Dataset: {dataset_name}")
+    print(f"    Overall shape of {dataset_name} bags: {np.array(bags).shape}")
+    print(f"    Type of {dataset_name} sample: {type(bags[0])}")
+    print(f"    Overall shape of {dataset_name} label: {np.array(bags_labels).shape}")
+    print(f"    Type of {dataset_name} label: {type(bags_labels[0])}")
 
-# make labels to be a np array
-tr_bags_labels = np.array(tr_bags_labels)
-test_bags_labels = np.array(test_bags_labels)
-
-
-print("Shape of training data after reshaping", np.array(tr_bags).shape)
-print(f"Type of training data: {type(tr_bags)}")
-
-print("Shape of first element in the training data: ", tr_bags[0].shape)
-print(f"Type of sample of training data: {type(tr_bags[0])}")
-
-print(
-    "Shape of the first element of the first training data sample: ",
-    tr_bags[0][0].shape,
-)
-print(f"Type of element sample of training data: {type(tr_bags[0][0])}")
-
-print(f"Shape of labels: {np.array(tr_bags_labels).shape}")
-print(f"Type of labels: {type(tr_bags_labels)}")
-
-print(f"Shape of first element labels: {tr_bags_labels[0].shape}")
-print(f"Type of labels: {type(tr_bags_labels[0])}")
 
 # %% SOME PLOTTING
 plot_bags = True

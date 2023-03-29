@@ -730,6 +730,8 @@ def get_img_file_names(
 
 
 # %% GET STATISTICS FOR DATA NORMALIZATION
+
+
 def get_normalization_values(
     dataset,
     dataset_steps,
@@ -808,3 +810,163 @@ def plot_tfr_dataset_intensity_dist(
         plt.close(fig)
     else:
         plt.show()
+
+
+# %% DATA UTILITIES FOR THE MULTIPLE INSTANCE LEARNING TRAINING
+def get_subject_bag_enc(
+    subject_file_paths,
+    enc_model,
+    config_file,
+    bag_size: int = 5,
+    sort_by_location: bool = False,
+    shuffle_samples_in_bag: bool = True,
+    rnd_seed: int = None,
+):
+    """
+    Given a list of files, the encoding model and the configuration file which was used to train the
+    encoder model, returns a numpy array with size [bag_size, enc_dim] containing the encodings of the subject images.
+
+    Steps:
+    - create generator to consume the subject files
+    - encode the images
+    - aggregate in one bag
+    """
+    if sort_by_location:
+        # sort file names based on the location (from the center of the tumor)
+        slice_position_index = -3
+        slice_position = [
+            int(Path(os.path.basename(f)).stem.split("_")[slice_position_index])
+            for f in subject_file_paths
+        ]
+        # adapt to have the slices with relative position ~50 to be the first ones
+        slice_position = np.abs(np.array(slice_position) - 50)
+        sorted_slices = np.argsort(slice_position)
+        subject_file_paths = [subject_file_paths[i] for i in sorted_slices]
+
+    # fix random seed
+    if rnd_seed:
+        np.random.seed(rnd_seed)
+
+    # fix the bag size (work on the files before creating the generator and predicting)
+    if len(subject_file_paths) < bag_size:
+        for i in range(bag_size - len(subject_file_paths)):
+            if sort_by_location:
+                # replicate more of the central (first) slices
+                slice_index = i
+            else:
+                # randomly oversample to get the right number of instantces for the bag
+                slice_index = np.random.randint(len(subject_file_paths))
+            subject_file_paths.append(subject_file_paths[slice_index])
+    elif len(subject_file_paths) > bag_size:
+        aus_subject_file_paths = []
+        if sort_by_location:
+            # replicate more of the central (first) slices
+            slice_index = range(bag_size)
+        else:
+            # randomly oversample to get the right number of instantces for the bag
+            slice_index = np.random.randint(
+                enc_images.shape[0],
+                size=bag_size,
+            )
+        for idx in slice_index:
+            aus_subject_file_paths.append(subject_file_paths[idx])
+
+        subject_file_paths = aus_subject_file_paths
+
+    if shuffle_samples_in_bag:
+        random.shuffle(subject_file_paths)
+
+    # build generator
+    target_size = (224, 224)
+    img_gen, _ = tfrs_data_generator(
+        file_paths=subject_file_paths,
+        input_size=target_size,
+        batch_size=len(subject_file_paths),
+        buffer_size=10,
+        return_gradCAM=config_file["USE_GRADCAM"],
+        return_age=config_file["USE_AGE"],
+        dataset_type="test",
+        nbr_classes=config_file["NBR_CLASSES"],
+        output_as_RGB=True
+        if any(
+            [
+                config_file["MODEL_TYPE"] == "EfficientNet",
+                config_file["MODEL_TYPE"] == "ResNet50",
+            ]
+        )
+        else False,
+    )
+
+    # get out samples from the generator
+    sample = next(iter(img_gen))
+    bag_imgs, bag_label = sample[0]["image"].numpy(), sample[1][0].numpy()
+
+    # for each image get the encoded version using the encoding model
+    enc_images = enc_model.predict(sample[0], verbose=0)
+    return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
+
+
+def get_train_data_MIL_model(
+    per_subject_files_dict: dict,
+    sample_encoder_model,
+    data_gen_configuration_dict: dict,
+    bag_size: int = 10,
+    sort_by_slice_location: bool = True,
+    shuffle_samples_in_bag: bool = True,
+    debug_number_of_bags: int = None,
+    rnd_seed: int = None,
+):
+    """
+    Utility that given a dictionary with the list of files for each subject, creates a dataset ready for training
+    where each sample in the dataset is a bag of encoded samples from each subjects.
+
+    INPUTS
+        per_subject_files_dict: (dict) dictionaty where every key is one of the subjects with value the list of files for the subject
+        sample_encoder_model: depp learning model to ensoce every sample in the bag
+        bag_size: (int) number of samples in each bag
+        sort_by_slice_location: (bool) specify if the samples in the bag are the slices most central in the tumor
+        shuffle_samples_in_bag: (bool) if the samples in the bag should shuffled.
+
+    OUTPUT
+        bags: (list) list of bags each containing the samples for each subject
+        bags_label: (list) list of labels for each bag alligned with the bags output
+        bags_images: (list) list of bags each containing the images used to obtain the encoded samples
+    """
+
+    # TRAIN DATA
+    bags, bags_label, bags_images = [], [], []
+
+    for idx, subject_files in enumerate(per_subject_files_dict.values()):
+        print(f"Working on subject {idx+1:} of {len(per_subject_files_dict)}\r", end="")
+        (bag, labels), images = get_subject_bag_enc(
+            subject_files,
+            sample_encoder_model,
+            data_gen_configuration_dict,
+            bag_size=bag_size,
+            sort_by_location=sort_by_slice_location,
+            shuffle_samples_in_bag=shuffle_samples_in_bag,
+            rnd_seed=rnd_seed,
+        )
+        bags.append(bag)
+        bags_label.append(labels)
+        bags_images.append(images)
+        if debug_number_of_bags:
+            if (idx + 1) == debug_number_of_bags:
+                break
+    print("\n")
+
+    # shuffle bags
+    if rnd_seed:
+        random.seed(rnd_seed)
+
+    zipped = list(zip(bags, bags_label, bags_images))
+    random.shuffle(zipped)
+    bags, bags_label, bags_images = zip(*zipped)
+
+    # reshape to have the bag dimension as first element and the number of bags as second element (from keras implementation)
+    bags = list(np.swapaxes(bags, 0, 1))
+    bags_label = np.array(bags_label)
+
+    #
+
+    return bags, bags_label, bags_images

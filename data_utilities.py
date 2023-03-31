@@ -821,6 +821,7 @@ def get_subject_bag_enc(
     sort_by_location: bool = False,
     shuffle_samples_in_bag: bool = True,
     rnd_seed: int = None,
+    imageNet_pretrained_encoder: bool = False,
 ):
     """
     Given a list of files, the encoding model and the configuration file which was used to train the
@@ -887,14 +888,7 @@ def get_subject_bag_enc(
         return_age=config_file["USE_AGE"],
         dataset_type="test",
         nbr_classes=config_file["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                config_file["MODEL_TYPE"] == "EfficientNet",
-                config_file["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
+        output_as_RGB=imageNet_pretrained_encoder,
     )
 
     # get out samples from the generator
@@ -915,6 +909,7 @@ def get_train_data_MIL_model(
     shuffle_samples_in_bag: bool = True,
     debug_number_of_bags: int = None,
     rnd_seed: int = None,
+    imageNet_pretrained_encoder: bool = True,
 ):
     """
     Utility that given a dictionary with the list of files for each subject, creates a dataset ready for training
@@ -946,6 +941,7 @@ def get_train_data_MIL_model(
             sort_by_location=sort_by_slice_location,
             shuffle_samples_in_bag=shuffle_samples_in_bag,
             rnd_seed=rnd_seed,
+            imageNet_pretrained_encoder=imageNet_pretrained_encoder,
         )
         bags.append(bag)
         bags_label.append(labels)

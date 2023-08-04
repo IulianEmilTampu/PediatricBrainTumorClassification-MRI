@@ -116,7 +116,7 @@ if not su_debug_flag:
         "-pti",
         "--PATH_TO_IMG_TFR",
         required=True,
-        help="Pathe to the folder containing the TFR files of the CBTN dataset.",
+        help="Path to the folder containing the TFR files of the CBTN dataset.",
     )
     parser.add_argument(
         "-ptg",

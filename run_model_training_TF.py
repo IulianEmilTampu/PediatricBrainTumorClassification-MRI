@@ -282,15 +282,15 @@ else:
             "NBR_FOLDS": 1,
             "LEARNING_RATE": 0.0001,
             "BATCH_SIZE": 32,
-            "MAX_EPOCHS": 75,
-            "DATA_AUGMENTATION": False,
-            "DATA_NORMALIZATION": True,
-            "DATA_SCALE": True,
+            "MAX_EPOCHS": 5,
+            "DATA_AUGMENTATION": True,
+            "DATA_NORMALIZATION": False,
+            "DATA_SCALE": False,
             "USE_PRETRAINED_MODEL": False,
             "PATH_TO_PRETRAINED_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_pretraining_optm_ADAM_SDM4_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_useAge_False_useGradCAM_False_seed_20091229/fold_1/last_model/last_model",
-            "FREEZE_WEIGHTS": True,
+            "FREEZE_WEIGHTS": False,
             "USE_AGE": False,
-            "AGE_NORMALIZATION": True,
+            "AGE_NORMALIZATION": False,
             "AGE_ENCODER_VERSION": "simple_age_encoder",
             "USE_GRADCAM": False,
             "LOSS": "MCC_and_CCE_Loss",
@@ -299,7 +299,7 @@ else:
             "DEBUG_DATASET_FRACTION": 1,
             "TFR_DATA": True,
             "MODEL_TYPE": "SDM4",
-            "MODEL_NAME": "TEST_OVERSAMPLING_EP",
+            "MODEL_NAME": "TEST_check_run_time",
             "OPTIMIZER": "ADAM",
         }
     else:
@@ -468,11 +468,11 @@ else:
         args_dict["CLASS_WEIGHTS"][c] = 1
 
 
-# OVERSAMPLING THE EP class
-random.seed(args_dict["RANDOM_SEED_NUMBER"])
-EP_samples = [i for i in subj_train_val_idx if i[1] == 1]
-subj_train_val_idx.extend(random.choices(EP_samples, k=50))
-subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
+# # OVERSAMPLING THE EP class
+# random.seed(args_dict["RANDOM_SEED_NUMBER"])
+# EP_samples = [i for i in subj_train_val_idx if i[1] == 1]
+# subj_train_val_idx.extend(random.choices(EP_samples, k=50))
+# subj_train_val_idx_labels = [f[1] for f in subj_train_val_idx]
 
 subj_train_idx, subj_val_idx = [], []
 per_fold_training_files, per_fold_validation_files = [], []
@@ -540,34 +540,38 @@ else:
     )
 
 # check that no testing files are in the training or validation
-idx_to_remove = []
-remove_overlap = True
-for idx, test_f in enumerate(test_files):
-    print(
-        f"Checking test files ({idx+1:0{len(str(len(test_files)))}d}\{len(test_files)})\r",
-        end="",
-    )
-    # check in each fold
-    for fold in range(len(per_fold_training_files)):
-        # check in the training set
-        if any([test_f == f for f in per_fold_training_files[fold]]):
-            if remove_overlap:
-                idx_to_remove.append(idx)
-            else:
-                raise ValueError(
-                    f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
-                )
-        if any([test_f == f for f in per_fold_validation_files[fold]]):
-            if remove_overlap:
-                idx_to_remove.append(idx)
-            else:
-                raise ValueError(
-                    f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
-                )
-if remove_overlap:
-    test_f = [f for idx, f in enumerate(test_f) if idx not in idx_to_remove]
+check_test_files = False
+if check_test_files:
+    idx_to_remove = []
+    remove_overlap = True
+    for idx, test_f in enumerate(test_files):
+        print(
+            f"Checking test files ({idx+1:0{len(str(len(test_files)))}d}\{len(test_files)})\r",
+            end="",
+        )
+        # check in each fold
+        for fold in range(len(per_fold_training_files)):
+            # check in the training set
+            if any([test_f == f for f in per_fold_training_files[fold]]):
+                if remove_overlap:
+                    idx_to_remove.append(idx)
+                else:
+                    raise ValueError(
+                        f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
+                    )
+            if any([test_f == f for f in per_fold_validation_files[fold]]):
+                if remove_overlap:
+                    idx_to_remove.append(idx)
+                else:
+                    raise ValueError(
+                        f"ATTENTION!!!\nSome of the testing files are part of the training set!\nCheck implementation"
+                    )
+    if remove_overlap:
+        test_f = [f for idx, f in enumerate(test_f) if idx not in idx_to_remove]
 
-print(f"\nChecking of the test files passed!")
+    print(f"\nChecking of the test files passed!")
+else:
+    print(f"WARNING!!!\nSKipping check of test file.")
 
 # Save infromation about which files are used for training/validation/testing
 dict = {
@@ -763,6 +767,18 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         norm_stats = [None, None, None]
 
     # build actuall training datagen with normalized values
+    output_as_RGB = (
+        True
+        if any(
+            [
+                args_dict["MODEL_TYPE"] == "EfficientNet",
+                args_dict["MODEL_TYPE"] == "ResNet50",
+                args_dict["MODEL_TYPE"] == "VGG16",
+            ]
+        )
+        else False
+    )
+
     train_gen, train_steps = data_gen(
         file_paths=tr_files[
             0 : int(len(tr_files) * args_dict["DEBUG_DATASET_FRACTION"])
@@ -774,19 +790,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         return_age=args_dict["USE_AGE"],
         dataset_type="train",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
+        output_as_RGB=output_as_RGB,
     )
     # plot also histogram of values
-    data_utilities.plot_tfr_dataset_intensity_dist(
-        train_gen, train_steps, plot_name="Train_data", save_path=save_model_path
-    )
+    if args_dict["TFR_DATA"]:
+        data_utilities.plot_tfr_dataset_intensity_dist(
+            train_gen, train_steps, plot_name="Training_data", save_path=save_model_path
+        )
     print(f'{" "*6}Training gen. done!')
 
     val_files = per_fold_validation_files[cv_f]
@@ -802,19 +812,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         return_age=args_dict["USE_AGE"],
         dataset_type="val",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
+        output_as_RGB=output_as_RGB,
     )
     # plot also histogram of values
-    data_utilities.plot_tfr_dataset_intensity_dist(
-        val_gen, val_steps, plot_name="Validation_data", save_path=save_model_path
-    )
+    if args_dict["TFR_DATA"]:
+        data_utilities.plot_tfr_dataset_intensity_dist(
+            val_gen, val_steps, plot_name="Validation_data", save_path=save_model_path
+        )
     print(f'{" "*6}Validation gen. done!')
 
     test_gen, test_steps = data_gen(
@@ -826,19 +830,13 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         return_age=args_dict["USE_AGE"],
         dataset_type="test",
         nbr_classes=args_dict["NBR_CLASSES"],
-        output_as_RGB=True
-        if any(
-            [
-                args_dict["MODEL_TYPE"] == "EfficientNet",
-                args_dict["MODEL_TYPE"] == "ResNet50",
-            ]
-        )
-        else False,
+        output_as_RGB=output_as_RGB,
     )
     # plot also histogram of values
-    data_utilities.plot_tfr_dataset_intensity_dist(
-        test_gen, test_steps, plot_name="Test_data", save_path=save_model_path
-    )
+    if args_dict["TFR_DATA"]:
+        data_utilities.plot_tfr_dataset_intensity_dist(
+            test_gen, test_steps, plot_name="Test_data", save_path=save_model_path
+        )
     print(f'{" "*6}Testing gen. done!')
 
     # -------------
@@ -905,7 +903,17 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             use_age=args_dict["USE_AGE"],
             use_age_thr_tabular_network=False,
             pretrained=args_dict["USE_PRETRAINED_MODEL"],
-            freeze_weights=args_dict["FREEZE_WEIGTH"],
+            freeze_weights=args_dict["FREEZE_WEIGHTS"],
+        )
+    elif args_dict["MODEL_TYPE"] == "VGG16":
+        print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
+        model = models.VGG16(
+            num_classes=args_dict["NBR_CLASSES"],
+            input_shape=(input_shape[0], input_shape[1], 3),
+            use_age=args_dict["USE_AGE"],
+            use_age_thr_tabular_network=False,
+            pretrained=args_dict["USE_PRETRAINED_MODEL"],
+            freeze_weights=args_dict["FREEZE_WEIGHTS"],
         )
     elif args_dict["MODEL_TYPE"] == "ResNet50":
         print(f'{" "*6}Using {args_dict["MODEL_TYPE"]} model.')
@@ -915,7 +923,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             use_age=args_dict["USE_AGE"],
             use_age_thr_tabular_network=False,
             pretrained=args_dict["USE_PRETRAINED_MODEL"],
-            freeze_weights=args_dict["FREEZE_WEIGTH"],
+            freeze_weights=args_dict["FREEZE_WEIGHTS"],
         )
     else:
         raise ValueError(
@@ -1140,3 +1148,5 @@ importlib.reload(test)
 
 args_dict["CV_MODEL_FOLDER"] = args_dict["SAVE_PATH"]
 test.run_testing(args_dict)
+
+# %%

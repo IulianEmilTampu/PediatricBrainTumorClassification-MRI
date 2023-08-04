@@ -25,6 +25,117 @@ from tensorflow.keras.layers import (
 from tensorflow.keras.initializers import glorot_uniform
 import tensorflow_addons as tfa
 
+
+# %% VGG16
+def VGG16(
+    num_classes: int,
+    input_shape: Union[list, tuple],
+    data_augmentation: bool = True,
+    scale_image: bool = True,
+    image_normalization_stats: tuple = None,
+    use_age: bool = False,
+    use_age_thr_tabular_network: bool = False,
+    debug: bool = False,
+    pretrained: bool = True,
+    freeze_weights: bool = False,
+):
+    """
+    Make sure not to use the functional API if not you get a
+    nested model from which is difficult to get the GradCam
+    """
+
+    denseDropoutRate = 0.4
+    denseRegularizer = "L2"
+    denseConstrain = None
+    denseActivation = "relu"
+
+    # building  model
+    img_input = Input(shape=input_shape, name="image")
+    x = img_input
+
+    if freeze_weights:
+        x = tf.keras.applications.vgg16.preprocess_input(x)
+    else:
+        # normalize of scale the image
+        if image_normalization_stats:
+            # apply image normalization with given mean and variance
+            x = tf.keras.layers.Normalization(
+                mean=image_normalization_stats[0], variance=image_normalization_stats[1]
+            )(x)
+        elif scale_image:
+            x = tf.keras.layers.Rescaling(scale=1 / 127.5, offset=-1)(x)
+
+    # data augmentation
+    if data_augmentation:
+        x = tf.keras.layers.RandomFlip(mode="horizontal_and_vertical")(x)
+        x = tf.keras.layers.RandomRotation(
+            factor=0.25, fill_mode="nearest", interpolation="bilinear"
+        )(x)
+        x = tf.keras.layers.RandomZoom(
+            height_factor=0.2,
+            width_factor=0.2,
+            fill_mode="nearest",
+            interpolation="bilinear",
+        )(x)
+        x = tf.keras.layers.RandomTranslation(
+            height_factor=0.2,
+            width_factor=0.2,
+            fill_mode="nearest",
+            interpolation="bilinear",
+        )(x)
+        x = tf.keras.layers.RandomContrast(factor=0.2)(x)
+
+    # use VGG16 from keras as feature extractor
+    vgg = tf.keras.applications.vgg16.VGG16(
+        include_top=False,
+        weights="imagenet" if pretrained else None,
+        pooling="avg",
+        input_tensor=x,
+    )
+
+    # froze model layers
+    if freeze_weights:
+        vgg.trainable = False
+
+    # build model
+    x = BatchNormalization()(vgg.output)
+    x = Dropout(denseDropoutRate)(x)
+    x = Dense(
+        units=512,
+        activation=denseActivation,
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+    )(x)
+    x = Dropout(denseDropoutRate)(x)
+
+    if use_age:
+        # @ToDo Implement tabular network
+        # if use_age_thr_tabular_network:
+        # else:
+        age_input = Input(shape=(1,), name="age")
+        enc_age = tf.keras.layers.Flatten(name="flatten_csv")(age_input)
+        x = tf.keras.layers.concatenate([x, enc_age])
+
+    output = Dense(
+        units=num_classes,
+        activation="softmax",
+        name="label",
+    )(x)
+
+    if use_age:
+        model = tf.keras.Model(
+            inputs=[img_input, age_input], outputs=output, name="VGG16"
+        )
+    else:
+        model = tf.keras.Model(inputs=img_input, outputs=output, name="VGG16")
+
+    # print model if needed
+    if debug is True:
+        print(model.summary())
+    print(model.summary())
+    return model
+
+
 # %% EfficientNet
 def EfficientNet(
     num_classes: int,
@@ -1155,13 +1266,13 @@ def MIL_model(
     # Extract features from inputs.
     inputs, embeddings = [], []
     shared_dense_layer_1 = layers.Dense(
-        128,
+        512,
         activation="relu",
         kernel_regularizer=denseRegularizer,
         kernel_constraint=denseConstrain,
     )
     shared_dense_layer_2 = layers.Dense(
-        128,
+        512,
         activation="relu",
         kernel_regularizer=denseRegularizer,
         kernel_constraint=denseConstrain,

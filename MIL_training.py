@@ -190,22 +190,22 @@ else:
             "GPU_NBR": "0",
             "NBR_FOLDS": 5,
             "LEARNING_RATE": 0.0001,
-            "BATCH_SIZE": 32,
-            "MAX_EPOCHS": 100,
-            "PATH_TO_ENCODER_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/DetectionModels/DetectionModel_SDM4_t1_t2_BraTS_fullDataset_lr10em6_more_data/fold_1/last_model",
+            "BATCH_SIZE": 1,
+            "MAX_EPOCHS": 50,
+            "PATH_TO_ENCODER_MODEL": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/Detection_optm_ADAM_EfficientNet_TFRdata_False_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_False_useAge_False_simple_age_encoder_useGradCAM_False_seed_1111/fold_1/best_model_weights/best_model",
             "PATH_TO_CONFIGURATION_FILES": "/flush/iulta54/Research/P5-MICCAI2023/trained_models_archive/TEST_OVERSAMPLING_EP_with_AUG_optm_ADAM_SDM4_TFRdata_True_modality_T2_loss_MCC_and_CCE_Loss_lr_0.0001_batchSize_32_pretrained_False_frozenWeight_True_useAge_False_simple_age_encoder_useGradCAM_False_seed_1111",
             "MIL_USE_AGE": False,
             "AGE_NORMALIZATION": False,
             "LOSS": "MCC_and_CCE_Loss",
             "RANDOM_SEED_NUMBER": 1111,
-            "MODEL_NAME": "MIL_TEST_SDM4_detection",
+            "MODEL_NAME": "MIL_TEST_EfficientNet_augmented_instances",
             "OPTIMIZER": "ADAM",
             "USE_IMAGENET_MODEL": True,
             "IMAGENT_MODEL_NAME": "EfficientNet",
             "BAG_SETTING_BAG_SIZE": None,
             "BAG_SETTING_SORT_BY_SLICE": True,
             "BAG_SETTING_SHUFFLE_BAG": False,
-            "MIL_SETTINGS_SHARED_MIL_WEIGHT_SIZE": 64,
+            "MIL_SETTINGS_SHARED_MIL_WEIGHT_SIZE": 32,
         }
     else:
         args_dict = {
@@ -312,7 +312,7 @@ max_len = max([len(key) for key in args_dict])
 
 
 def get_per_subject_files_from_csv_file(
-    img_dataset_folder, path_to_train_val_test_csv_file, fold
+    args_dict, path_to_train_val_test_csv_file, fold
 ):
     """
     Siple utility that gets the path to the dataset and the path to the train_validation_test.csv file
@@ -517,18 +517,29 @@ else:
     loaded_enc_model = tf.keras.models.load_model(args_dict["PATH_TO_ENCODER_MODEL"])
     # refine model to only get the image encoding vector
     # get index to the global average pooling layer (but using the output of the batch norm that follows the global average pooling)
+    if len(loaded_enc_model.layers) >= 150:
+        # this is efficientNet
+        layer_name = "avg_pool"
+    else:
+        layer_name = "global_average_pooling2d"
+
     idx = [
         i
-        for i, l in enumerate(loaded_enc_model.layers)
-        if "global_average_pooling2d" in l.name
+        for i, l in enumerate(reversed(loaded_enc_model.layers))
+        if layer_name in l.name
     ][0]
+
+    if len(loaded_enc_model.layers) >= 150:
+        idx = -(idx + 1)
+    else:
+        idx = idx + 1
     img_input = loaded_enc_model.inputs
-    encoded_image = loaded_enc_model.layers[idx + 1].output
+    encoded_image = loaded_enc_model.layers[idx].output
     enc_model = tf.keras.Model(inputs=img_input, outputs=encoded_image)
 
 # %%
 # ---------
-# RUNIING CROSS VALIDATION TRAINING
+# RUNING CROSS VALIDATION TRAINING
 # ---------
 importlib.reload(data_utilities)
 importlib.reload(models)
@@ -558,12 +569,15 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         val_per_subjects_files,
         test_per_subjects_files,
     ) = get_per_subject_files_from_csv_file(
-        img_dataset_folder=args_dict["IMG_DATASET_FOLDER"],
+        args_dict=args_dict,
         path_to_train_val_test_csv_file=os.path.join(
             args_dict["PATH_TO_CONFIGURATION_FILES"], "train_val_test_files.json"
         ),
         fold=cv_f,
     )
+
+    # debug
+    # tr_per_subjects_files.update(val_per_subjects_files)
 
     # encode subjects
     if args_dict["BAG_SETTING_BAG_SIZE"] is None:
@@ -774,7 +788,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
         train_bags_labels,
         validation_data=(val_bags, val_bags_labels),
         epochs=args_dict["MAX_EPOCHS"],
-        batch_size=1,
+        batch_size=args_dict["BATCH_SIZE"],
         callbacks=callbacks_list,
         verbose=1,
         class_weight=args_dict["CLASS_WEIGHTS"],

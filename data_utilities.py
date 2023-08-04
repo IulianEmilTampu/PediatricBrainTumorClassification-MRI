@@ -822,6 +822,7 @@ def get_subject_bag_enc(
     shuffle_samples_in_bag: bool = True,
     rnd_seed: int = None,
     imageNet_pretrained_encoder: bool = False,
+    augment_instances: bool = False,
 ):
     """
     Given a list of files, the encoding model and the configuration file which was used to train the
@@ -896,7 +897,14 @@ def get_subject_bag_enc(
     bag_imgs, bag_label = sample[0]["image"].numpy(), sample[1][0].numpy()
 
     # for each image get the encoded version using the encoding model
-    enc_images = enc_model.predict(sample[0], verbose=0)
+    if augment_instances:
+        aug_instances = tf.image.random_flip_left_right(
+            sample[0]["image"], seed=rnd_seed
+        )
+        aug_instances = tf.image.random_flip_up_down(aug_instances, seed=rnd_seed)
+        enc_images = enc_model.predict(aug_instances, verbose=0)
+    else:
+        enc_images = enc_model.predict(sample[0], verbose=0)
     return (enc_images, bag_label.squeeze()), bag_imgs.squeeze()
 
 
@@ -910,6 +918,7 @@ def get_train_data_MIL_model(
     debug_number_of_bags: int = None,
     rnd_seed: int = None,
     imageNet_pretrained_encoder: bool = True,
+    augment_instances: bool = False,
 ):
     """
     Utility that given a dictionary with the list of files for each subject, creates a dataset ready for training
@@ -942,6 +951,7 @@ def get_train_data_MIL_model(
             shuffle_samples_in_bag=shuffle_samples_in_bag,
             rnd_seed=rnd_seed,
             imageNet_pretrained_encoder=imageNet_pretrained_encoder,
+            augment_instances=augment_instances,
         )
         bags.append(bag)
         bags_label.append(labels)

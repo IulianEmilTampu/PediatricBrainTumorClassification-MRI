@@ -10,6 +10,7 @@ Steps
 4 - save model
 """
 import os
+import sys
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 
@@ -37,7 +38,7 @@ import models
 import losses
 import tf_callbacks
 
-su_debug_flag = False
+su_debug_flag = True
 
 # --------------------------------------
 # read the input arguments and set the base folder
@@ -186,23 +187,23 @@ if not su_debug_flag:
 else:
     # # # # # # # # # # # # # # DEBUG
     args_dict = {
-        "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+        "WORKING_FOLDER": "/flush/iulta54/Research/P5-Pediatric_tumor_classification",
+        "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN_v1/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
         "DATASET_TYPE": "CBTN",
         "MR_MODALITIES": ["T2"],
         "NBR_CLASSES": 3,
         "GPU_NBR": "0",
-        "NBR_FOLDS": 5,
+        "NBR_FOLDS": 1,
         "OPTIMIZER": "ADAM",
-        "LEARNING_RATE": 0.01,
+        "LEARNING_RATE": 0.001,
         "LOSS": "CCE",
         "BATCH_SIZE": 8,
-        "MAX_EPOCHS": 25,
-        "MODEL_VERSION": "large_age_encoder",
+        "MAX_EPOCHS": 5,
+        "MODEL_VERSION": "2D-SDM4",
         "DATA_NORMALIZATION": True,
         "RANDOM_SEED_NUMBER": 20091229,
         "DEBUG_DATASET_FRACTION": 1,
-        "MODEL_NAME": "TTTT",
+        "MODEL_NAME": "TEST",
     }
 
 # revise model name
@@ -274,7 +275,7 @@ Independently from the combination of modalities, the test validation and train 
 are defined so that no vlomume is present in more than one set.
 
 Steps
-2 - using the number of subject, screate indexes to identify which files
+2 - using the number of subject, create indexes to identify which files
     are used for training, validation and testing
 3 - save the information about the split.
 """
@@ -709,7 +710,7 @@ for cv_f in range(args_dict["NBR_FOLDS"]):
             Ytest_categorical = []
             ds_iter = iter(data_gen)
             ds_steps = data_gen_steps
-            for i in range(ds_steps):
+            for i in range(int(ds_steps)):
                 x, y = next(ds_iter)
                 Ytest_categorical.append(y)
                 Ptest_softmax.append(model.predict(x, verbose=0))

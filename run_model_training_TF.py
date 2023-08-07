@@ -44,7 +44,7 @@ su_debug_flag = True
 # --------------------------------------
 if not su_debug_flag:
     parser = argparse.ArgumentParser(
-        description="Run cross validation training for tumor detection."
+        description="Running model training for classification of pediatric tumors."
     )
     parser.add_argument(
         "-wf",
@@ -273,8 +273,8 @@ else:
     # # # # # # # # # # # # # # DEBUG
     if os.name == "posix":
         args_dict = {
-            "WORKING_FOLDER": "/flush/iulta54/Research/P5-MICCAI2023",
-            "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+            "WORKING_FOLDER": "/flush/iulta54/Research/P5-Pediatric_tumor_classification",
+            "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/CBTN_v1/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
             # "IMG_DATASET_FOLDER": "/flush/iulta54/Research/Data/BRATS/extracted_slices/2021/saved_images",
             "DATASET_TYPE": "CBTN",
             "NBR_CLASSES": 3,
@@ -596,11 +596,9 @@ print(
 )
 
 # %% test generators
-
 look_at_generator = False
 if look_at_generator:
     # define utilities
-
     def show_batched_example_tfrs_dataset(
         dataset,
         class_names=["0", "1"],

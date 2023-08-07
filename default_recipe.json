@@ -1,0 +1,42 @@
+{
+    "working_folder": "/flush/iulta54/Research/P5-Pediatric_tumor_classification",
+    "script_running_mode": "hyper_parameter_tuning",
+    "run_name": "DEFAULT_SETTINGS",
+    "dataloader_settings": {
+        "dataset_folder": "/flush/iulta54/Research/Data/CBTN_v1/EXTRACTED_SLICES_TFR_MERGED_FROM_TB_20230320",
+        "dataset_type": "CBTN",
+        "data_normalization": "False",
+        "data_agumentation": "True",
+        "data_scale": "False",
+        "tfr_data": "True",
+        "use_age": "False",
+        "age_normalization": "False",
+        "use_gradCAM": "False",
+        "mr_modelities": [
+            "T2"
+        ],
+        "num_classes": 3,
+        "num_folds": 1
+    },
+    "model_settings": {
+        "model_type": "SDM4",
+        "use_pretrained": "False",
+        "path_to_pretrained_model": "None",
+        "freeze_weights": "False",
+        "age_encoder_version": "None",
+        "hyper_parameters_recipe": "None"
+    },
+    "training_settings": {
+        "gpu_nbr": 0,
+        "learning_rate": 0.001,
+        "batch_size": 32,
+        "max_epochs": 100,
+        "loss": "CCE",
+        "optimizer": "ADAM",
+        "random_seed_number": 1111
+    },
+    "debug_settings": {
+        "debug_dataset_fraction": 0.5,
+        "debug_print_batch_examples": "False"
+    }
+}

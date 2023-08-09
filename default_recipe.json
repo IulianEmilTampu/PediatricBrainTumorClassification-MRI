@@ -16,13 +16,17 @@
             "T2"
         ],
         "num_classes": 3,
-        "num_folds": 1
+        "num_folds": 3,
+        "target_size": [
+            224,
+            224
+        ]
     },
     "model_settings": {
-        "model_type": "SDM4",
-        "use_pretrained": "False",
+        "model_type": "ResNet50",
+        "use_pretrained": "True",
         "path_to_pretrained_model": "None",
-        "freeze_weights": "False",
+        "freeze_weights": "True",
         "age_encoder_version": "None",
         "hyper_parameters_recipe": "None"
     },
@@ -38,5 +42,8 @@
     "debug_settings": {
         "debug_dataset_fraction": 0.5,
         "debug_print_batch_examples": "False"
+    },
+    "tuner_settings": {
+        "num_samples": 20
     }
 }

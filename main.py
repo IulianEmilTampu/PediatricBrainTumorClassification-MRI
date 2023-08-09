@@ -2,15 +2,33 @@ import os
 from pathlib import Path
 import argparse
 import json
-import print_dict
 from distutils.util import strtobool
 from typing import Any, Union, Sequence
 from datetime import datetime
 import logging
 import numpy as np
+import random
+from matplotlib import pyplot as plt
+
+# tensorflow imports
+import tensorflow as tf
+import tensorflow_addons as tfa
+from tensorflow_addons.optimizers import Lookahead
+
+# tuner imports
+import ray
+from ray import air, tune
+from ray.tune.schedulers import AsyncHyperBandScheduler
+from ray.tune.integration.keras import TuneReportCallback
+from ray.tune.search.hyperopt import HyperOptSearch
+from ray.tune.search import ConcurrencyLimiter
+from hyperopt import hp
 
 # local imports
 import data_utilities
+import models
+import losses
+import tf_callbacks
 
 
 def parse_recipes() -> dict:
@@ -135,6 +153,13 @@ def parse_recipes() -> dict:
         default=False,
         help="Specify if the model should use the gradCAM information. If true, the gradCAM infromation is concatenated to the image information as an extra channel",
     )
+    parser.add_argument(
+        "--target_size",
+        nargs="+",
+        required=False,
+        default=[224, 224],
+        help="Specify target size of the images for model training.",
+    )
 
     # training settings
     parser.add_argument(
@@ -253,6 +278,48 @@ def parse_recipes() -> dict:
             raise ValueError(
                 f"The recipe file provided does not exist. Provide a valid file. Given {recipe_file_arg.recipe_file}"
             )
+        # fix the type of the values in the recipe
+        recipe["dataloader_settings"]["data_normalization"] = (
+            True
+            if recipe["dataloader_settings"]["data_normalization"] == "True"
+            else False
+        )
+        recipe["dataloader_settings"]["data_agumentation"] = (
+            True
+            if recipe["dataloader_settings"]["data_agumentation"] == "True"
+            else False
+        )
+        recipe["dataloader_settings"]["data_scale"] = (
+            True if recipe["dataloader_settings"]["data_scale"] == "True" else False
+        )
+        recipe["dataloader_settings"]["tfr_data"] = (
+            True if recipe["dataloader_settings"]["tfr_data"] == "True" else False
+        )
+        recipe["dataloader_settings"]["use_age"] = (
+            True if recipe["dataloader_settings"]["use_age"] == "True" else False
+        )
+        recipe["dataloader_settings"]["age_normalization"] = (
+            True
+            if recipe["dataloader_settings"]["age_normalization"] == "True"
+            else False
+        )
+        recipe["dataloader_settings"]["use_gradCAM"] = (
+            True if recipe["dataloader_settings"]["use_gradCAM"] == "True" else False
+        )
+
+        recipe["model_settings"]["use_pretrained"] = (
+            True if recipe["model_settings"]["use_pretrained"] == "True" else False
+        )
+        recipe["model_settings"]["freeze_weights"] = (
+            True if recipe["model_settings"]["freeze_weights"] == "True" else False
+        )
+
+        recipe["debug_settings"]["debug_print_batch_examples"] = (
+            True
+            if recipe["debug_settings"]["debug_print_batch_examples"] == "True"
+            else False
+        )
+
     else:
         print("Parsing settings...")
         # manually parse the remaining values creating a dictionary matching the recipe template one
@@ -327,7 +394,7 @@ def parse_recipes() -> dict:
             "optm",
             recipe["training_settings"]["optimizer"],
             "tfr_data",
-            recipe["dataloader_settings"]["tfr_data"],
+            str(recipe["dataloader_settings"]["tfr_data"]),
             # "modality",
             # "_".join([i for i in recipe["dataloader_settings"]["mr_modelities"]]),
             "loss",
@@ -337,11 +404,11 @@ def parse_recipes() -> dict:
             "batchSize",
             str(recipe["training_settings"]["batch_size"]),
             "pretrained",
-            recipe["model_settings"]["use_pretrained"],
+            str(recipe["model_settings"]["use_pretrained"]),
             "frozenWeights",
-            recipe["model_settings"]["freeze_weights"],
+            str(recipe["model_settings"]["freeze_weights"]),
             "use_age",
-            recipe["dataloader_settings"]["use_age"],
+            str(recipe["dataloader_settings"]["use_age"]),
             "age_encoder_version",
             recipe["model_settings"]["age_encoder_version"],
             "rnd_seed",
@@ -352,32 +419,6 @@ def parse_recipes() -> dict:
     # print_dict.pd(recipe)
 
     return recipe
-
-
-def run_recipe(recipe):
-    """
-    Function that takes runs the recipe.
-    """
-    # define logger for this application
-    logger = logging.getLogger("main.run_recipe")
-
-    if recipe["script_running_mode"] == "hyper_parameter_tuning":
-        logger.info("Running script in hyper parameter tuning mode.")
-        data_dict = _get_dataset_files_for_training_validation_testing(recipe)
-
-    elif recipe["script_running_mode"] == "train":
-        logger.info("Running script in training mode.")
-
-        _run_model_training(recipe)
-
-    elif recipe["script_running_mode"] == "validation":
-        logger.info("Running script in validation mode.")
-    elif recipe["script_running_mode"] == "inference":
-        logger.info("Running script in inference mode.")
-    else:
-        raise ValueError(
-            f'Running script mode on among the ones accepted. Given {recipe["script_running_mode"]}'
-        )
 
 
 def set_up(recipe):
@@ -423,7 +464,7 @@ def set_up(recipe):
     # set GPU (or device)
     # --------------------------------------
 
-    # import tensorflow
+    import tensorflow
     import tensorflow as tf
     import tensorflow_addons as tfa
     import warnings
@@ -467,6 +508,33 @@ def set_up(recipe):
             raise ValueError(f"{fd.capitalize} not found. Given {folder}.")
 
 
+def run_recipe(recipe):
+    """
+    Function that takes runs the recipe.
+    """
+    # define logger for this application
+    logger = logging.getLogger("main.run_recipe")
+
+    if recipe["script_running_mode"] == "hyper_parameter_tuning":
+        logger.info("Running script in hyper parameter tuning mode.")
+
+        _run_model_hyper_parameters_tuning(recipe)
+
+    elif recipe["script_running_mode"] == "train":
+        logger.info("Running script in training mode.")
+
+        # _run_model_training(recipe)
+
+    elif recipe["script_running_mode"] == "validation":
+        logger.info("Running script in validation mode.")
+    elif recipe["script_running_mode"] == "inference":
+        logger.info("Running script in inference mode.")
+    else:
+        raise ValueError(
+            f'Running script mode on among the ones accepted. Given {recipe["script_running_mode"]}'
+        )
+
+
 def _get_default_recipe(with_comments=True):
     """
     Utility that returns an empty recipe that contains all the different fiends that can
@@ -490,6 +558,7 @@ def _get_default_recipe(with_comments=True):
             "mr_modelities": "Specify which MR modalities to use during training (T1 and/or T2)",
             "num_classes": "Number of classification classes.",
             "num_folds": "Number of cross validation folds.",
+            "target_size": "Specify the size of the input images to the model. DEfault [224,224].",
         },
         "model_setting": {
             "model_type": "Specify model to use during training. Chose among the ones available in the models.py file.",
@@ -740,18 +809,14 @@ def _get_dataset_files_for_training_validation_testing(recipe):
 
     # Save infromation about which files are used for training/validation/testing
     data_dict = {
-        "test": [os.path.basename(f) for f in test_files],
+        "test": [f for f in test_files],
         "train": [],
         "validation": [],
     }
 
     for f in range(recipe["dataloader_settings"]["num_folds"]):
-        data_dict["train"].append(
-            [os.path.basename(i) for i in per_fold_training_files[f]]
-        )
-        data_dict["validation"].append(
-            [os.path.basename(i) for i in per_fold_validation_files[f]]
-        )
+        data_dict["train"].append([i for i in per_fold_training_files[f]])
+        data_dict["validation"].append([i for i in per_fold_validation_files[f]])
 
     logger.info(f"# Training files:{len(per_fold_training_files[-1])}")
     logger.info(f"# Validation files: {len(per_fold_validation_files[-1])}")
@@ -765,16 +830,463 @@ def _get_dataset_files_for_training_validation_testing(recipe):
     return data_dict
 
 
-def _run_model_training(recipe):
-    logger = logging.getLogger("main.run_model_training")
-    return None
+def _get_train_validation_test_data_generators(
+    train_set: list,
+    validation_set: list,
+    recipe: dict,
+    test_set=None,
+):
+    """
+    Utility that given the paths to the  training, validation and testing files, returns a data generator on them using the recipe
+    information.
+    """
+    logger = logging.getLogger("main.get_datagenerators")
+    if recipe["dataloader_settings"]["tfr_data"]:
+        data_gen = data_utilities.tfrs_data_generator
+    elif any(
+        [
+            recipe["dataloader_settings"]["use_age"],
+            recipe["dataloader_settings"]["use_gradCAM"],
+        ]
+    ):
+        raise ValueError(
+            "Trying to run training using dataset from .jpeg files while asking for age information and/or gradCAM.\nThis is not yet implemented. Use TFR dataset."
+        )
+    else:
+        data_gen = data_utilities.img_data_generator
+
+    # shuffle the training files
+    random.Random(recipe["training_settings"]["random_seed_number"]).shuffle(train_set)
+
+    # get norm stat if needed
+    if recipe["dataloader_settings"]["data_normalization"]:
+        train_gen, train_steps = data_gen(
+            file_paths=train_set[
+                0 : int(
+                    len(train_set) * recipe["debug_settings"]["debug_dataset_fraction"]
+                )
+            ],
+            input_size=recipe["dataloader_settings"]["target_size"],
+            batch_size=recipe["training_settings"]["batch_size"],
+            buffer_size=1000,
+            return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
+            return_age=recipe["dataloader_settings"]["use_age"],
+            dataset_type="test",  # this is just to not have the dataset repeated infinitely (changes after)
+            nbr_classes=recipe["dataloader_settings"]["num_classes"],
+        )
+
+        # get normalization stats
+        logger.info(f"Getting normalization stats from training generator...")
+        norm_stats = data_utilities.get_normalization_values(
+            train_gen,
+            train_steps,
+            return_age_norm_values=recipe["dataloader_settings"]["use_age"],
+            return_gradCAM_norm_values=recipe["dataloader_settings"]["use_gradCAM"],
+        )
+    else:
+        norm_stats = [None, None, None]
+
+    # build actuall training datagen with normalized values
+    output_as_RGB = (
+        True
+        if any(
+            [
+                recipe["model_settings"]["model_type"] == "EfficientNet",
+                recipe["model_settings"]["model_type"] == "ResNet50",
+                recipe["model_settings"]["model_type"] == "VGG16",
+            ]
+        )
+        else False
+    )
+
+    train_gen, train_steps = data_gen(
+        file_paths=train_set[
+            0 : int(len(train_set) * recipe["debug_settings"]["debug_dataset_fraction"])
+        ],
+        input_size=recipe["dataloader_settings"]["target_size"],
+        batch_size=recipe["training_settings"]["batch_size"],
+        buffer_size=500,
+        return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
+        return_age=recipe["dataloader_settings"]["use_age"],
+        dataset_type="train",
+        nbr_classes=recipe["dataloader_settings"]["num_classes"],
+        output_as_RGB=output_as_RGB,
+    )
+    logger.info("Training generator done.")
+
+    random.Random(recipe["training_settings"]["random_seed_number"]).shuffle(
+        validation_set
+    )
+    val_gen, val_steps = data_gen(
+        file_paths=validation_set[
+            0 : int(
+                len(validation_set) * recipe["debug_settings"]["debug_dataset_fraction"]
+            )
+        ],
+        input_size=recipe["dataloader_settings"]["target_size"],
+        batch_size=recipe["training_settings"]["batch_size"],
+        buffer_size=1000,
+        return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
+        return_age=recipe["dataloader_settings"]["use_age"],
+        dataset_type="val",
+        nbr_classes=recipe["dataloader_settings"]["num_classes"],
+        output_as_RGB=output_as_RGB,
+    )
+    logger.info("Validation generator done.")
+
+    if test_set:
+        # return test set as well (TODO)
+        test_gen, test_steps = None, None
+        logger.info("Testing generator done.")
+
+        return (
+            norm_stats,
+            train_gen,
+            train_steps,
+            val_gen,
+            val_steps,
+            test_gen,
+            test_steps,
+        )
+    else:
+        return norm_stats, train_gen, train_steps, val_gen, val_steps
 
 
-def main():
-    recipe = parse_recipes()
-    set_up(recipe)
-    run_recipe(recipe)
+def _build_model_based_on_recipe(recipe):
+    """
+    Utility that builds the model as set in the recipe
+    """
+    logger = logging.getLogger("main.build_model")
+    input_shape = (
+        (
+            recipe["dataloader_settings"]["target_size"][0],
+            recipe["dataloader_settings"]["target_size"][1],
+            1,
+        )
+        if not recipe["dataloader_settings"]["use_gradCAM"]
+        else (
+            recipe["dataloader_settings"]["target_size"][0],
+            recipe["dataloader_settings"]["target_size"][1],
+            2,
+        )
+    )
+
+    if recipe["model_settings"]["model_type"] == "SDM4":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.SimpleDetectionModel_TF(
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            input_shape=input_shape,
+            image_normalization_stats=recipe["model_settings"]["norm_stats"][0],
+            scale_image=recipe["dataloader_settings"]["data_scale"],
+            data_augmentation=recipe["dataloader_settings"]["data_agumentation"],
+            kernel_size=(3, 3),
+            pool_size=(2, 2),
+            use_age=recipe["dataloader_settings"]["use_age"],
+            age_normalization_stats=recipe["model_settings"]["norm_stats"][2]
+            if recipe["dataloader_settings"]["age_normalization"]
+            else None,
+            age_encoder_version=recipe["model_settings"]["age_encoder_version"],
+            use_pretrained=recipe["model_settings"]["use_pretrained"],
+            pretrained_model_path=recipe["model_settings"]["path_to_pretrained_model"],
+            freeze_weights=recipe["model_settings"]["freeze_weights"],
+            debug=True,
+        )
+
+    elif recipe["model_settings"]["model_type"] == "ResNet9":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.ResNet9(
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            input_shape=input_shape,
+            use_age=recipe["dataloader_settings"]["use_age"],
+            use_age_thr_tabular_network=False,
+        )
+    elif recipe["model_settings"]["model_type"] == "ViT":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.ViT(
+            input_size=input_shape,
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            use_age=recipe["dataloader_settings"]["use_age"],
+            use_age_thr_tabular_network=False,
+            use_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
+            patch_size=16,
+            projection_dim=64,
+            num_heads=8,
+            mlp_head_units=(256, 128),
+            transformer_layers=8,
+            transformer_units=None,
+            debug=False,
+        )
+    elif recipe["model_settings"]["model_type"] == "EfficientNet":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.EfficientNet(
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            input_shape=(input_shape[0], input_shape[1], 3),
+            use_age=recipe["dataloader_settings"]["use_age"],
+            use_age_thr_tabular_network=False,
+            pretrained=recipe["model_settings"]["use_pretrained"],
+            freeze_weights=recipe["model_settings"]["freeze_weights"],
+        )
+    elif recipe["model_settings"]["model_type"] == "VGG16":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.VGG16(
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            input_shape=(input_shape[0], input_shape[1], 3),
+            use_age=recipe["dataloader_settings"]["use_age"],
+            use_age_thr_tabular_network=False,
+            pretrained=recipe["model_settings"]["use_pretrained"],
+            freeze_weights=recipe["model_settings"]["freeze_weights"],
+            debug=True,
+        )
+    elif recipe["model_settings"]["model_type"] == "ResNet50":
+        logger.info(f'Using {recipe["model_settings"]["model_type"]} model.')
+        return models.ResNet50(
+            num_classes=recipe["dataloader_settings"]["num_classes"],
+            input_shape=(input_shape[0], input_shape[1], 3),
+            use_age=recipe["dataloader_settings"]["use_age"],
+            use_age_thr_tabular_network=False,
+            pretrained=recipe["model_settings"]["use_pretrained"],
+            freeze_weights=recipe["model_settings"]["freeze_weights"],
+        )
+    else:
+        raise ValueError(
+            "Model type not among the ones that are implemented.\nDefine model in the models.py file and add code here for building the model."
+        )
+
+
+def _train_model(config, recipe, data_dict, fold_num, save_model_path):
+    """
+    Utility that given the configuration (RAY TUNE) and the recipe, runs model training for hyper_parameter tuning
+    """
+
+    (
+        norm_stats,
+        train_gen,
+        train_steps,
+        val_gen,
+        val_steps,
+    ) = _get_train_validation_test_data_generators(
+        train_set=data_dict["train"][fold_num],
+        validation_set=data_dict["validation"][fold_num],
+        recipe=recipe,
+        test_set=None,
+    )
+
+    recipe["model_settings"]["norm_stats"] = norm_stats
+
+    logger = logging.getLogger("main.traini_model")
+    logger.info("Creating model...")
+    model = _build_model_based_on_recipe(recipe)
+
+    # define training parameters
+    logger.info("Defining learning scheduler...")
+
+    # specify optimizer
+    if config["optimizer"] == "SGD":
+        optimizer = tf.keras.optimizers.SGD(
+            learning_rate=config["learning_rate"], momentum=config["momentum"]
+        )
+    elif config["optimizer"] == "ADAM":
+        optimizer = tfa.optimizers.AdamW(
+            learning_rate=config["learning_rate"],
+            weight_decay=0.0001,
+        )
+
+    # specify loss
+    if config["loss"] == "MCC":
+        logger.info(f"Using MCC loss.")
+        loss = losses.MCC_Loss()
+        what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
+            num_classes=recipe["dataloader_settings"]["num_classes"]
+        )
+    elif config["loss"] == "MCC_and_CCE_Loss":
+        logger.info(f"Using sum of MCC and CCE loss.")
+        loss = losses.MCC_and_CCE_Loss()
+    elif config["loss"] == "CCE":
+        logger.info(f"Using CCE loss.")
+        loss = tf.keras.losses.CategoricalCrossentropy()
+    elif config["loss"] == "BCE":
+        logger.info(f"Using BCS loss.")
+        loss = tf.keras.losses.BinaryCrossentropy()
+    else:
+        raise ValueError(
+            f"The loss provided is not available. Implement in the losses.py or here."
+        )
+
+    logger.info("Compiling model...")
+    model.compile(
+        optimizer=optimizer,
+        loss=loss,
+        metrics=[
+            "accuracy",
+            tfa.metrics.MatthewsCorrelationCoefficient(
+                num_classes=recipe["dataloader_settings"]["num_classes"]
+            ),
+        ],
+    )
+
+    # set callbacks
+    logger.info("Setting callbacks...")
+    best_model_path = os.path.join(save_model_path, "best_model_weights", "")
+    Path(best_model_path).mkdir(parents=True, exist_ok=True)
+
+    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
+        filepath=best_model_path,
+        save_weights_only=True,
+        monitor="val_loss",
+        mode="min",
+        save_best_only=True,
+    )
+
+    callbacks_list = [
+        tf_callbacks.SaveBestModelWeights(
+            save_path=best_model_path, monitor="val_loss", mode="min"
+        ),
+        # model_checkpoint_callback,
+        tf_callbacks.LossAndErrorPrintingCallback(
+            save_path=save_model_path, print_every_n_epoch=5
+        ),
+        TuneReportCallback({"mean_accuracy": "accuracy"}),
+    ]
+
+    # save training configuration (right before training to account for the changes made in the meantime)
+    logger.info("Saving updated recipe just before statrting training...")
+    recipe["training_settings"]["optimizer"] = str(type(optimizer))
+    recipe["training_settings"]["loss_type"] = str(type(loss))
+
+    with open(os.path.join(recipe["SAVE_PATH"], "config.json"), "w") as config_file:
+        config_file.write(json.dumps(recipe))
+
+    model.fit(
+        train_gen,
+        steps_per_epoch=train_steps,
+        validation_data=val_gen,
+        validation_steps=val_steps,
+        epochs=recipe["training_settings"]["max_epochs"],
+        verbose=1,
+        callbacks=callbacks_list,
+        class_weight=recipe["in_script_settings"]["class_weights"],
+    )
+
+
+def _run_model_hyper_parameters_tuning(recipe):
+    """
+    Funtion that sets up and runs a nested k-fold CV for model hyper-parameter tuning (inner k-fold CV)
+    and model evaluation (outer k-fold CV). The model hyperparameter tuning is performed using the Ray tuner
+    library.
+
+    Steps
+    - Create stratified outer k-fold CV used for model performance estimation (stratification only for the down-stream task)
+        - For each fold, create the not-stratified inner k-fold CV (this can also just be the pool of data
+        as from the stratified since the Ray tuner takes care of optimizing the parameters without CV).
+        - initialize model, data loader and trainer
+        - initialize search space
+        - run model hyper-parameters tuning
+        - Using the best model hyper-parameters, train the model using the whole inner CV data
+        - Evaluate the best model on the outer CV test data and save performance
+    - Save performance metrics, and all the other stuf (TODO)
+    """
+    logger = logging.getLogger("main.run_hyper_parameter_tuning")
+    data_dict = _get_dataset_files_for_training_validation_testing(recipe)
+
+    summary_test = {}
+
+    # run throuth the folds
+    for cv_f in range(recipe["dataloader_settings"]["num_folds"]):
+        logger.info(
+            f'Runing fold {cv_f+1} of {recipe["dataloader_settings"]["num_folds"]}'
+        )
+        logger.debug("Creating folders where to save the information for this run.")
+        save_model_path = os.path.join(recipe["SAVE_PATH"], f"fold_{cv_f+1}")
+        Path(save_model_path).mkdir(parents=True, exist_ok=True)
+        summary_test[str(cv_f + 1)] = {"best": [], "last": []}
+
+        # set up training and validation data generators
+        logger.info("Setting trainining and validation data generators...")
+        (
+            norm_stats,
+            train_gen,
+            train_steps,
+            val_gen,
+            val_steps,
+        ) = _get_train_validation_test_data_generators(
+            train_set=data_dict["train"][cv_f],
+            validation_set=data_dict["validation"][cv_f],
+            recipe=recipe,
+            test_set=None,
+        )
+        # add normalization info to the recipe
+        recipe["model_settings"]["norm_stats"] = norm_stats
+
+        # plot also histogram of values
+        logger.info("Saving training dataset histogram values")
+        if recipe["dataloader_settings"]["tfr_data"]:
+            data_utilities.plot_tfr_dataset_intensity_dist(
+                train_gen,
+                train_steps,
+                plot_name="Training_data",
+                save_path=save_model_path,
+            )
+        logger.info("Saving validation dataset histogram values")
+        if recipe["dataloader_settings"]["tfr_data"]:
+            data_utilities.plot_tfr_dataset_intensity_dist(
+                val_gen,
+                val_steps,
+                plot_name="Validation data",
+                save_path=save_model_path,
+            )
+
+        # set up ray tuner
+
+        # define search space
+        logger.info("Initialization of Ray search space.")
+
+        # this is the scheduler for the tuner
+        sched = tune.schedulers.ASHAScheduler(
+            time_attr="training_iteration", max_t=400, grace_period=20
+        )
+
+        train_fn_with_parameters = tune.with_parameters(
+            _train_model,
+            recipe=recipe,
+            data_dict=data_dict,
+            fold_num=cv_f,
+            save_model_path=save_model_path,
+        )
+
+        logger.info("Initializing Ray Tuner")
+        tuner = tune.Tuner(
+            tune.with_resources(
+                train_fn_with_parameters, resources={"cpu": 15, "gpu": 1}
+            ),
+            tune_config=tune.TuneConfig(
+                metric="mean_accuracy",
+                mode="max",
+                scheduler=sched,
+                num_samples=3,
+            ),
+            run_config=air.RunConfig(
+                name="exp",
+                stop={
+                    "mean_accuracy": 0.99,
+                    "training_iteration": recipe["tuner_settings"]["num_samples"],
+                },
+                storage_path=os.path.join(save_model_path, "ray_tuner"),
+            ),
+            param_space={
+                "learning_rate": tune.uniform(0.0001, 0.1),
+                "momentum": tune.uniform(0.1, 0.9),
+                "optimizer": tune.choice(["SGD", "ADAM"]),
+                "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
+            },
+        )
+
+        logger.info("Starting hyperparameter tuning")
+        results = tuner.fit()
+
+        print("Best hyperparameters found were: ", results.get_best_result().config)
 
 
 if __name__ == "__main__":
-    main()
+    recipe = parse_recipes()
+    set_up(recipe)
+    run_recipe(recipe)

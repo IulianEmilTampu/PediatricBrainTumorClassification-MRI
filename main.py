@@ -1256,19 +1256,19 @@ def _run_model_hyper_parameters_tuning(recipe):
         logger.info("Initializing Ray Tuner")
         tuner = tune.Tuner(
             tune.with_resources(
-                train_fn_with_parameters, resources={"cpu": 15, "gpu": 1}
+                train_fn_with_parameters, resources={"cpu": 1, "gpu": 1}
             ),
             tune_config=tune.TuneConfig(
                 metric="mean_accuracy",
                 mode="max",
                 scheduler=sched,
-                num_samples=3,
+                num_samples=recipe["tuner_settings"]["num_samples"],
             ),
             run_config=air.RunConfig(
                 name="exp",
                 stop={
                     "mean_accuracy": 0.99,
-                    "training_iteration": recipe["tuner_settings"]["num_samples"],
+                    "training_iteration": recipe["training_settings"]["max_epochs"],
                 },
                 storage_path=os.path.join(save_model_path, "ray_tuner"),
             ),

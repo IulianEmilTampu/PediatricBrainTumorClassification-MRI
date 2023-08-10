@@ -9,20 +9,21 @@ import logging
 import numpy as np
 import random
 from matplotlib import pyplot as plt
+import matplotlib
 
-# tensorflow imports
+matplotlib.use("agg")
+
+from filelock import FileLock
+from tensorflow.keras.datasets import mnist
 import tensorflow as tf
 import tensorflow_addons as tfa
-from tensorflow_addons.optimizers import Lookahead
 
-# tuner imports
+
 import ray
 from ray import air, tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
 from ray.tune.integration.keras import TuneReportCallback
-from ray.tune.search.hyperopt import HyperOptSearch
 from ray.tune.search import ConcurrencyLimiter
-from hyperopt import hp
 
 # local imports
 import data_utilities
@@ -464,32 +465,32 @@ def set_up(recipe):
     # set GPU (or device)
     # --------------------------------------
 
-    import tensorflow
-    import tensorflow as tf
-    import tensorflow_addons as tfa
-    import warnings
+    # import tensorflow
+    # import tensorflow as tf
+    # import tensorflow_addons as tfa
+    # import warnings
 
-    tf.get_logger().setLevel(logging.ERROR)
-    from tensorflow.keras.utils import to_categorical
-    from tensorflow_addons.optimizers import Lookahead
+    # tf.get_logger().setLevel(logging.ERROR)
+    # from tensorflow.keras.utils import to_categorical
+    # from tensorflow_addons.optimizers import Lookahead
 
-    # from tensorflow.python.framework.ops import disable_eager_execution
+    # # from tensorflow.python.framework.ops import disable_eager_execution
 
-    # disable_eager_execution()
+    # # disable_eager_execution()
 
-    devices = tf.config.list_physical_devices("GPU")
+    # devices = tf.config.list_physical_devices("GPU")
 
-    if devices:
-        setup_logger.info(
-            f'Running training on GPU # {recipe["training_settings"]["gpu_nbr"]} \n'
-        )
+    # if devices:
+    #     setup_logger.info(
+    #         f'Running training on GPU # {recipe["training_settings"]["gpu_nbr"]} \n'
+    #     )
 
-        warnings.simplefilter(action="ignore", category=FutureWarning)
-        tf.config.experimental.set_memory_growth(devices[0], True)
-    else:
-        setup_logger.warning(
-            f"ATTENTION!!! MODEL RUNNING ON CPU. Check implementation in case GPU is wanted."
-        )
+    #     warnings.simplefilter(action="ignore", category=FutureWarning)
+    #     tf.config.experimental.set_memory_growth(devices[0], True)
+    # else:
+    #     setup_logger.warning(
+    #         f"ATTENTION!!! MODEL RUNNING ON CPU. Check implementation in case GPU is wanted."
+    #     )
 
     # -------------------------------------
     # Check that the given folder exist
@@ -506,33 +507,6 @@ def set_up(recipe):
     ):
         if not os.path.isdir(folder):
             raise ValueError(f"{fd.capitalize} not found. Given {folder}.")
-
-
-def run_recipe(recipe):
-    """
-    Function that takes runs the recipe.
-    """
-    # define logger for this application
-    logger = logging.getLogger("main.run_recipe")
-
-    if recipe["script_running_mode"] == "hyper_parameter_tuning":
-        logger.info("Running script in hyper parameter tuning mode.")
-
-        _run_model_hyper_parameters_tuning(recipe)
-
-    elif recipe["script_running_mode"] == "train":
-        logger.info("Running script in training mode.")
-
-        # _run_model_training(recipe)
-
-    elif recipe["script_running_mode"] == "validation":
-        logger.info("Running script in validation mode.")
-    elif recipe["script_running_mode"] == "inference":
-        logger.info("Running script in inference mode.")
-    else:
-        raise ValueError(
-            f'Running script mode on among the ones accepted. Given {recipe["script_running_mode"]}'
-        )
 
 
 def _get_default_recipe(with_comments=True):
@@ -779,10 +753,10 @@ def _get_dataset_files_for_training_validation_testing(recipe):
         idx_to_remove = []
         remove_overlap = True
         for idx, test_f in enumerate(test_files):
-            print(
-                f"Checking test files ({idx+1:0{len(str(len(test_files)))}d}\{len(test_files)})\r",
-                end="",
-            )
+            # print(
+            #     f"Checking test files ({idx+1:0{len(str(len(test_files)))}d}\{len(test_files)})\r",
+            #     end="",
+            # )
             # check in each fold
             for fold in range(len(per_fold_training_files)):
                 # check in the training set
@@ -1053,11 +1027,8 @@ def _build_model_based_on_recipe(recipe):
         )
 
 
-def _train_model(config, recipe, data_dict, fold_num, save_model_path):
-    """
-    Utility that given the configuration (RAY TUNE) and the recipe, runs model training for hyper_parameter tuning
-    """
-
+def _train_model(config, recipe=None, num_cross_validation_fold=None):
+    data_dict = _get_dataset_files_for_training_validation_testing(recipe)
     (
         norm_stats,
         train_gen,
@@ -1065,20 +1036,15 @@ def _train_model(config, recipe, data_dict, fold_num, save_model_path):
         val_gen,
         val_steps,
     ) = _get_train_validation_test_data_generators(
-        train_set=data_dict["train"][fold_num],
-        validation_set=data_dict["validation"][fold_num],
+        train_set=data_dict["train"][num_cross_validation_fold],
+        validation_set=data_dict["validation"][num_cross_validation_fold],
         recipe=recipe,
         test_set=None,
     )
 
     recipe["model_settings"]["norm_stats"] = norm_stats
 
-    logger = logging.getLogger("main.traini_model")
-    logger.info("Creating model...")
     model = _build_model_based_on_recipe(recipe)
-
-    # define training parameters
-    logger.info("Defining learning scheduler...")
 
     # specify optimizer
     if config["optimizer"] == "SGD":
@@ -1093,200 +1059,136 @@ def _train_model(config, recipe, data_dict, fold_num, save_model_path):
 
     # specify loss
     if config["loss"] == "MCC":
-        logger.info(f"Using MCC loss.")
+        # logger.info(f"Using MCC loss.")
         loss = losses.MCC_Loss()
         what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
             num_classes=recipe["dataloader_settings"]["num_classes"]
         )
     elif config["loss"] == "MCC_and_CCE_Loss":
-        logger.info(f"Using sum of MCC and CCE loss.")
+        # logger.info(f"Using sum of MCC and CCE loss.")
         loss = losses.MCC_and_CCE_Loss()
     elif config["loss"] == "CCE":
-        logger.info(f"Using CCE loss.")
+        # logger.info(f"Using CCE loss.")
         loss = tf.keras.losses.CategoricalCrossentropy()
     elif config["loss"] == "BCE":
-        logger.info(f"Using BCS loss.")
+        # logger.info(f"Using BCS loss.")
         loss = tf.keras.losses.BinaryCrossentropy()
     else:
         raise ValueError(
             f"The loss provided is not available. Implement in the losses.py or here."
         )
 
-    logger.info("Compiling model...")
     model.compile(
-        optimizer=optimizer,
         loss=loss,
-        metrics=[
-            "accuracy",
-            tfa.metrics.MatthewsCorrelationCoefficient(
-                num_classes=recipe["dataloader_settings"]["num_classes"]
-            ),
-        ],
+        optimizer=optimizer,
+        metrics=["accuracy"],
     )
 
-    # set callbacks
-    logger.info("Setting callbacks...")
-    best_model_path = os.path.join(save_model_path, "best_model_weights", "")
-    Path(best_model_path).mkdir(parents=True, exist_ok=True)
-
-    model_checkpoint_callback = tf.keras.callbacks.ModelCheckpoint(
-        filepath=best_model_path,
-        save_weights_only=True,
-        monitor="val_loss",
-        mode="min",
-        save_best_only=True,
-    )
-
+    # specify callbacks
     callbacks_list = [
-        tf_callbacks.SaveBestModelWeights(
-            save_path=best_model_path, monitor="val_loss", mode="min"
-        ),
-        # model_checkpoint_callback,
         tf_callbacks.LossAndErrorPrintingCallback(
-            save_path=save_model_path, print_every_n_epoch=5
+            save_path=os.path.join(
+                recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
+            ),
+            print_every_n_epoch=10,
         ),
-        TuneReportCallback({"mean_accuracy": "accuracy"}),
+        tf_callbacks.SaveBestModelWeights(
+            save_path=os.path.join(
+                recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
+            ),
+            monitor="val_loss",
+            mode="min",
+        ),
+        TuneReportCallback({"mean_accuracy": "val_accuracy"}),
     ]
-
-    # save training configuration (right before training to account for the changes made in the meantime)
-    logger.info("Saving updated recipe just before statrting training...")
-    recipe["training_settings"]["optimizer"] = str(type(optimizer))
-    recipe["training_settings"]["loss_type"] = str(type(loss))
-
-    with open(os.path.join(recipe["SAVE_PATH"], "config.json"), "w") as config_file:
-        config_file.write(json.dumps(recipe))
 
     model.fit(
         train_gen,
         steps_per_epoch=train_steps,
+        batch_size=recipe["training_settings"]["batch_size"],
+        epochs=recipe["training_settings"]["max_epochs"],
+        verbose=0,
         validation_data=val_gen,
         validation_steps=val_steps,
-        epochs=recipe["training_settings"]["max_epochs"],
-        verbose=1,
         callbacks=callbacks_list,
-        class_weight=recipe["in_script_settings"]["class_weights"],
     )
 
 
-def _run_model_hyper_parameters_tuning(recipe):
-    """
-    Funtion that sets up and runs a nested k-fold CV for model hyper-parameter tuning (inner k-fold CV)
-    and model evaluation (outer k-fold CV). The model hyperparameter tuning is performed using the Ray tuner
-    library.
+def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
+    Path(
+        os.path.join(recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}")
+    ).mkdir(parents=True, exist_ok=True)
 
-    Steps
-    - Create stratified outer k-fold CV used for model performance estimation (stratification only for the down-stream task)
-        - For each fold, create the not-stratified inner k-fold CV (this can also just be the pool of data
-        as from the stratified since the Ray tuner takes care of optimizing the parameters without CV).
-        - initialize model, data loader and trainer
-        - initialize search space
-        - run model hyper-parameters tuning
-        - Using the best model hyper-parameters, train the model using the whole inner CV data
-        - Evaluate the best model on the outer CV test data and save performance
-    - Save performance metrics, and all the other stuf (TODO)
-    """
-    logger = logging.getLogger("main.run_hyper_parameter_tuning")
-    data_dict = _get_dataset_files_for_training_validation_testing(recipe)
+    sched = tune.schedulers.ASHAScheduler(
+        time_attr="training_iteration", max_t=400, grace_period=20
+    )
 
-    summary_test = {}
+    # train_fn_with_parameters = tune.with_parameters(train_model, recipe=recipe)
 
-    # run throuth the folds
-    for cv_f in range(recipe["dataloader_settings"]["num_folds"]):
-        logger.info(
-            f'Runing fold {cv_f+1} of {recipe["dataloader_settings"]["num_folds"]}'
-        )
-        logger.debug("Creating folders where to save the information for this run.")
-        save_model_path = os.path.join(recipe["SAVE_PATH"], f"fold_{cv_f+1}")
-        Path(save_model_path).mkdir(parents=True, exist_ok=True)
-        summary_test[str(cv_f + 1)] = {"best": [], "last": []}
+    train_fn_with_parameters = tune.with_parameters(
+        _train_model, recipe=recipe, num_cross_validation_fold=num_cross_validation_fold
+    )
 
-        # set up training and validation data generators
-        logger.info("Setting trainining and validation data generators...")
-        (
-            norm_stats,
-            train_gen,
-            train_steps,
-            val_gen,
-            val_steps,
-        ) = _get_train_validation_test_data_generators(
-            train_set=data_dict["train"][cv_f],
-            validation_set=data_dict["validation"][cv_f],
-            recipe=recipe,
-            test_set=None,
-        )
-        # add normalization info to the recipe
-        recipe["model_settings"]["norm_stats"] = norm_stats
-
-        # plot also histogram of values
-        logger.info("Saving training dataset histogram values")
-        if recipe["dataloader_settings"]["tfr_data"]:
-            data_utilities.plot_tfr_dataset_intensity_dist(
-                train_gen,
-                train_steps,
-                plot_name="Training_data",
-                save_path=save_model_path,
-            )
-        logger.info("Saving validation dataset histogram values")
-        if recipe["dataloader_settings"]["tfr_data"]:
-            data_utilities.plot_tfr_dataset_intensity_dist(
-                val_gen,
-                val_steps,
-                plot_name="Validation data",
-                save_path=save_model_path,
-            )
-
-        # set up ray tuner
-
-        # define search space
-        logger.info("Initialization of Ray search space.")
-
-        # this is the scheduler for the tuner
-        sched = tune.schedulers.ASHAScheduler(
-            time_attr="training_iteration", max_t=400, grace_period=20
-        )
-
-        train_fn_with_parameters = tune.with_parameters(
-            _train_model,
-            recipe=recipe,
-            data_dict=data_dict,
-            fold_num=cv_f,
-            save_model_path=save_model_path,
-        )
-
-        logger.info("Initializing Ray Tuner")
-        tuner = tune.Tuner(
-            tune.with_resources(
-                train_fn_with_parameters, resources={"cpu": 1, "gpu": 1}
-            ),
-            tune_config=tune.TuneConfig(
-                metric="mean_accuracy",
-                mode="max",
-                scheduler=sched,
-                num_samples=recipe["tuner_settings"]["num_samples"],
-            ),
-            run_config=air.RunConfig(
-                name="exp",
-                stop={
-                    "mean_accuracy": 0.99,
-                    "training_iteration": recipe["training_settings"]["max_epochs"],
-                },
-                storage_path=os.path.join(save_model_path, "ray_tuner"),
-            ),
-            param_space={
-                "learning_rate": tune.uniform(0.0001, 0.1),
-                "momentum": tune.uniform(0.1, 0.9),
-                "optimizer": tune.choice(["SGD", "ADAM"]),
-                "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
+    tuner = tune.Tuner(
+        tune.with_resources(train_fn_with_parameters, resources={"cpu": 15, "gpu": 1}),
+        tune_config=tune.TuneConfig(
+            metric="mean_accuracy",
+            mode="max",
+            scheduler=sched,
+            num_samples=recipe["tuner_settings"]["num_samples"],
+        ),
+        run_config=air.RunConfig(
+            name=f"fold_{num_cross_validation_fold+1}",
+            stop={
+                "mean_accuracy": 0.90,
+                "training_iteration": num_training_iterations,
             },
+            storage_path=os.path.join(recipe["SAVE_PATH"], "ray_tuner"),
+        ),
+        param_space={
+            "learning_rate": tune.uniform(0.001, 0.1),
+            "momentum": tune.uniform(0.1, 0.9),
+            "optimizer": tune.choice(["SGD", "ADAM"]),
+            "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
+        },
+    )
+    results = tuner.fit()
+
+    print("Best hyperparameters found were: ", results.get_best_result().config)
+
+
+def _run_recipe(recipe):
+    """
+    Function that takes runs the recipe.
+    """
+    # define logger for this application
+    logger = logging.getLogger("main.run_recipe")
+
+    if recipe["script_running_mode"] == "hyper_parameter_tuning":
+        logger.info("Running script in hyper parameter tuning mode.")
+
+        for cv_f in range(recipe["dataloader_settings"]["num_folds"]):
+            _tune_CBTN(
+                num_training_iterations=recipe["training_settings"]["max_epochs"],
+                num_cross_validation_fold=cv_f,
+            )
+
+    elif recipe["script_running_mode"] == "train":
+        logger.info("Running script in training mode.")
+
+        # _run_model_training(recipe)
+
+    elif recipe["script_running_mode"] == "validation":
+        logger.info("Running script in validation mode.")
+    elif recipe["script_running_mode"] == "inference":
+        logger.info("Running script in inference mode.")
+    else:
+        raise ValueError(
+            f'Running script mode on among the ones accepted. Given {recipe["script_running_mode"]}'
         )
-
-        logger.info("Starting hyperparameter tuning")
-        results = tuner.fit()
-
-        print("Best hyperparameters found were: ", results.get_best_result().config)
 
 
 if __name__ == "__main__":
     recipe = parse_recipes()
     set_up(recipe)
-    run_recipe(recipe)
+    _run_recipe(recipe)

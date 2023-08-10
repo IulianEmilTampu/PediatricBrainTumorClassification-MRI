@@ -812,6 +812,60 @@ def plot_tfr_dataset_intensity_dist(
         plt.show()
 
 
+# %% PLOTTING UTILITIES
+
+
+def show_batched_example_tfrs_dataset(
+    dataset,
+    recipe,
+    class_names=["0", "1"],
+    nbr_images: int = 1,
+    show_gradCAM: bool = False,
+    show_histogram: bool = False,
+):
+    dataset_iterator = iter(dataset)
+    image_batch, label_batch = next(dataset_iterator)
+    print(image_batch["image"].shape)
+    print(
+        f' mean: {np.mean(image_batch["image"]):0.4f}\n std: {np.std(image_batch["image"]):0.4f}'
+    )
+
+    for i in range(nbr_images):
+        fig, ax = plt.subplots(nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5))
+
+        if show_gradCAM:
+            ax[0].imshow(image_batch["image"][i, :, :, 0], cmap="gray")
+            label = label_batch[i]
+            ax[0].set_title(f"{label}, {class_names[label.argmax()]}")
+            ax[1].imshow(image_batch["image"][i, :, :, 1], cmap="gray")
+        else:
+            ax.imshow(image_batch["image"][i, :, :, 0], cmap="gray")
+            label = label_batch[i]
+            ax.set_title(f"{label}, {class_names[label.numpy().argmax()]}")
+        fig.savefig(os.path.join(recipe["SAVE_PATH"], f"example_{i+1:4d}.png"))
+        plt.close(fig)
+
+    if show_histogram:
+        fig, ax = plt.subplots(nrows=1, ncols=2 if show_gradCAM else 1, figsize=(5, 5))
+        if show_gradCAM:
+            ax[0].hist(
+                image_batch["image"][:, :, :, 0].numpy().ravel(),
+            )
+            label = label_batch[i]
+            ax[0].set_title("Histogram of image pixel values")
+            ax[1].hist(
+                image_batch["image"][:, :, :, 1].numpy().ravel(),
+            )
+        else:
+            ax.hist(
+                image_batch["image"][:, :, :, 0].numpy().ravel(),
+            )
+            label = label_batch[i]
+            ax.set_title("Histogram of image pixel values")
+            fig.savefig(os.path.join(recipe["SAVE_PATH"], "histogram.png"))
+            plt.close(fig)
+
+
 # %% DATA UTILITIES FOR THE MULTIPLE INSTANCE LEARNING TRAINING
 def get_subject_bag_enc(
     subject_file_paths,

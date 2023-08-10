@@ -246,7 +246,7 @@ def EfficientNet(
     return model
 
 
-#%% ResNet18
+# %% ResNet50
 
 
 def ResNet50(
@@ -269,7 +269,7 @@ def ResNet50(
     denseDropoutRate = 0.8
 
     img_input = Input(shape=input_shape, name="image")
-    x = tf.keras.applications.mobilenet.preprocess_input(img_input)
+    x = tf.keras.applications.resnet50.preprocess_input(img_input)
 
     # use EfficientNet from keras as feature extractor
     resnet50 = tf.keras.applications.resnet.ResNet152(
@@ -316,15 +316,14 @@ def ResNet50(
 
     if use_age:
         model = tf.keras.Model(
-            inputs=[img_input, age_input], outputs=output, name="EfficientNet"
+            inputs=[img_input, age_input], outputs=output, name="ResNet50"
         )
     else:
-        model = tf.keras.Model(inputs=img_input, outputs=output, name="EfficientNet")
+        model = tf.keras.Model(inputs=img_input, outputs=output, name="ResNet50")
 
     # print model if needed
     if debug is True:
         print(model.summary())
-    print(model.summary())
     return model
 
 
@@ -345,7 +344,6 @@ def SimpleDetectionModel_TF(
     pretrained_model_path: str = None,
     freeze_weights: bool = True,
 ):
-
     convRegularizer = tf.keras.regularizers.l2(l=0.00001)
     denseRegularizer = "L2"
 
@@ -779,7 +777,6 @@ class ShiftedPatchTokenization(tf.keras.layers.Layer):
         return (tokens, patches)
 
     def get_config(self):
-
         config = super().get_config().copy()
         config.update(
             {
@@ -808,7 +805,6 @@ class PatchEncoder(tf.keras.layers.Layer):
         return encoded_patches
 
     def get_config(self):
-
         config = super().get_config().copy()
         config.update(
             {
@@ -860,7 +856,6 @@ def ViT(
     transformer_units: int = None,
     debug=False,
 ):
-
     # ViT parameters
     patch_size = patch_size
     num_patches = (input_size[0] // patch_size) * (input_size[1] // patch_size)
@@ -898,7 +893,6 @@ def ViT(
             return patches
 
         def get_config(self):
-
             config = super().get_config().copy()
             config.update(
                 {
@@ -924,7 +918,6 @@ def ViT(
             return encoded
 
         def get_config(self):
-
             config = super().get_config().copy()
             config.update(
                 {
@@ -1003,7 +996,6 @@ def ViT_2(
     debug=False,
     vanilla: bool = False,
 ):
-
     # ViT parameters
     patch_size = patch_size
     num_patches = (input_size[0] // patch_size) * (input_size[1] // patch_size)
@@ -1162,7 +1154,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         use_gated=False,
         **kwargs,
     ):
-
         super().__init__(**kwargs)
 
         self.weight_params_dim = weight_params_dim
@@ -1180,7 +1171,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         self.u_regularizer = self.kernel_regularizer
 
     def build(self, input_shape):
-
         # Input shape.
         # List of 2D tensors with shape: (batch_size, input_dim).
         input_dim = input_shape[0][1]
@@ -1215,7 +1205,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         self.input_built = True
 
     def call(self, inputs):
-
         # Assigning variables from the number of inputs.
         instances = [self.compute_attention_scores(instance) for instance in inputs]
 
@@ -1225,7 +1214,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         return [alpha[i] for i in range(alpha.shape[0])]
 
     def compute_attention_scores(self, instance):
-
         # Reserve in-case "gated mechanism" used.
         original_instance = instance
 
@@ -1234,7 +1222,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
 
         # for learning non-linear relations efficiently.
         if self.use_gated:
-
             instance = instance * tf.math.sigmoid(
                 tf.tensordot(original_instance, self.u_weight_params, axes=1)
             )
@@ -1243,7 +1230,6 @@ class MILAttentionLayer(tf.keras.layers.Layer):
         return tf.tensordot(instance, self.w_weight_params, axes=1)
 
     def get_config(self):
-
         config = super().get_config().copy()
         config.update(
             {

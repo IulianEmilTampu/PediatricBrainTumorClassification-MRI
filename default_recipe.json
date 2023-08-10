@@ -16,7 +16,7 @@
             "T2"
         ],
         "num_classes": 3,
-        "num_folds": 3,
+        "num_folds": 2,
         "target_size": [
             224,
             224
@@ -34,16 +34,16 @@
         "gpu_nbr": 0,
         "learning_rate": 0.001,
         "batch_size": 32,
-        "max_epochs": 100,
+        "max_epochs": 5,
         "loss": "CCE",
         "optimizer": "ADAM",
-        "random_seed_number": 1111
+        "random_seed_number": 1112
     },
     "debug_settings": {
         "debug_dataset_fraction": 0.5,
         "debug_print_batch_examples": "False"
     },
     "tuner_settings": {
-        "num_samples": 20
+        "num_samples": 3
     }
 }

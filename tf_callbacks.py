@@ -86,7 +86,9 @@ class LossAndErrorPrintingCallback(tf.keras.callbacks.Callback):
                 ax[2].set_title("Training and Validation MCC curves")
                 ax[2].legend()
 
-            plt.savefig(os.path.join(self.save_path, "training_curves.png"))
+            plt.savefig(
+                os.path.join(self.save_path, f"training_curves_e_{epoch+1}.png")
+            )
             plt.close(fig)
 
             if self.history["learning_rate"][-1]:

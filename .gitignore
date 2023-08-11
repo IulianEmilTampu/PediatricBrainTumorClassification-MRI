@@ -4,3 +4,4 @@ __pycache__/
 trained_models_archive/
 not_for_git/
 .vscode/
+default_recipe_WIN.json

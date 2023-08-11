@@ -61,6 +61,12 @@
             "CCE",
             "MCC_and_CCE_Loss"
         ],
-        "num_samples": 50
+        "num_samples": 50,
+        "cpus_per_trial":5,
+        "max_nbr_classification_layers":5,
+        "min_number_nodes_classification_layers":64,
+        "max_number_nodes_classification_layers":1024,
+        "range_fraction_conv_layers_to_freeze": [0, 0.8],
+        "pool_type": ["avg", "max"]
     }
 }

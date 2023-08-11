@@ -1145,11 +1145,23 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
             },
             storage_path=os.path.join(recipe["SAVE_PATH"], "ray_tuner"),
         ),
+        # param_space={
+        #     "learning_rate": tune.uniform(0.001, 0.1),
+        #     "momentum": tune.uniform(0.1, 0.9),
+        #     "optimizer": tune.choice(["SGD", "ADAM"]),
+        #     "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
+        # },
         param_space={
-            "learning_rate": tune.uniform(0.001, 0.1),
-            "momentum": tune.uniform(0.1, 0.9),
-            "optimizer": tune.choice(["SGD", "ADAM"]),
-            "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
+            "learning_rate": tune.uniform(
+                recipe["tuner_settings"]["learning_rate_range"][0],
+                recipe["tuner_settings"]["learning_rate_range"][1],
+            ),
+            "momentum": tune.uniform(
+                recipe["tuner_settings"]["momentum_range"][0],
+                recipe["tuner_settings"]["momentum_range"][1],
+            ),
+            "optimizer": tune.choice(recipe["tuner_settings"]["optimizer"]),
+            "loss": tune.choice(recipe["tuner_settings"]["loss"]),
         },
     )
     results = tuner.fit()

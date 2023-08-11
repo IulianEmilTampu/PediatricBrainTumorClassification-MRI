@@ -16,7 +16,7 @@
             "T2"
         ],
         "num_classes": 3,
-        "num_folds": 2,
+        "num_folds": 5,
         "target_size": [
             224,
             224
@@ -34,16 +34,33 @@
         "gpu_nbr": 0,
         "learning_rate": 0.001,
         "batch_size": 32,
-        "max_epochs": 5,
+        "max_epochs": 50,
         "loss": "CCE",
         "optimizer": "ADAM",
-        "random_seed_number": 1112
+        "random_seed_number": 1111
     },
     "debug_settings": {
-        "debug_dataset_fraction": 0.5,
+        "debug_dataset_fraction": 1,
         "debug_print_batch_examples": "False"
     },
     "tuner_settings": {
-        "num_samples": 3
+        "learning_rate_range": [
+            0.00001,
+            0.01
+        ],
+        "momentum_range": [
+            0.1,
+            0.9
+        ],
+        "optimizer": [
+            "SGD",
+            "ADAM"
+        ],
+        "loss": [
+            "MCC",
+            "CCE",
+            "MCC_and_CCE_Loss"
+        ],
+        "num_samples": 50
     }
 }

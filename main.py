@@ -842,7 +842,7 @@ def _get_train_validation_test_data_generators(
             ],
             input_size=recipe["dataloader_settings"]["target_size"],
             batch_size=recipe["training_settings"]["batch_size"],
-            buffer_size=1000,
+            buffer_size=recipe['dataloader_settings']['buffer'],
             return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
             return_age=recipe["dataloader_settings"]["use_age"],
             dataset_type="test",  # this is just to not have the dataset repeated infinitely (changes after)
@@ -879,7 +879,7 @@ def _get_train_validation_test_data_generators(
         ],
         input_size=recipe["dataloader_settings"]["target_size"],
         batch_size=recipe["training_settings"]["batch_size"],
-        buffer_size=500,
+        buffer_size=recipe['dataloader_settings']['buffer'],
         return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
         return_age=recipe["dataloader_settings"]["use_age"],
         dataset_type="train",
@@ -899,7 +899,7 @@ def _get_train_validation_test_data_generators(
         ],
         input_size=recipe["dataloader_settings"]["target_size"],
         batch_size=recipe["training_settings"]["batch_size"],
-        buffer_size=1000,
+        buffer_size=recipe['dataloader_settings']['buffer'],
         return_gradCAM=recipe["dataloader_settings"]["use_gradCAM"],
         return_age=recipe["dataloader_settings"]["use_age"],
         dataset_type="val",
@@ -926,7 +926,7 @@ def _get_train_validation_test_data_generators(
         return norm_stats, train_gen, train_steps, val_gen, val_steps
 
 
-def _build_model_based_on_recipe(recipe):
+def _build_model_based_on_recipe(recipe, config):
     """
     Utility that builds the model as set in the recipe
     """
@@ -1020,7 +1020,11 @@ def _build_model_based_on_recipe(recipe):
             use_age_thr_tabular_network=False,
             pretrained=recipe["model_settings"]["use_pretrained"],
             freeze_weights=recipe["model_settings"]["freeze_weights"],
-        )
+            fraction_of_layers_to_freeze = config['fraction_of_layers_to_freeze'],
+            nbr_classification_layers = config['nbr_classification_layers'],
+            nbr_nodes_classification_layer = config['nbr_nodes_classification_layer'],
+            pool_type = config['pool_type'],
+                )
     else:
         raise ValueError(
             "Model type not among the ones that are implemented.\nDefine model in the models.py file and add code here for building the model."
@@ -1044,7 +1048,7 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
 
     recipe["model_settings"]["norm_stats"] = norm_stats
 
-    model = _build_model_based_on_recipe(recipe)
+    model = _build_model_based_on_recipe(recipe, config)
 
     # specify optimizer
     if config["optimizer"] == "SGD":
@@ -1086,19 +1090,19 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
 
     # specify callbacks
     callbacks_list = [
-        tf_callbacks.LossAndErrorPrintingCallback(
-            save_path=os.path.join(
-                recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
-            ),
-            print_every_n_epoch=10,
-        ),
-        tf_callbacks.SaveBestModelWeights(
-            save_path=os.path.join(
-                recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
-            ),
-            monitor="val_loss",
-            mode="min",
-        ),
+        # tf_callbacks.LossAndErrorPrintingCallback(
+        #   save_path=os.path.join(
+        #       recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
+        #   ),
+        #   print_every_n_epoch=10,
+        #),
+        # tf_callbacks.SaveBestModelWeights(
+        #    save_path=os.path.join(
+        #        recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
+        #    ),
+        #    monitor="val_loss",
+        #    mode="min",
+        #),
         TuneReportCallback({"mean_accuracy": "val_accuracy"}),
     ]
 
@@ -1115,6 +1119,7 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
 
 
 def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
+    # make folder for saving training information
     Path(
         os.path.join(recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}")
     ).mkdir(parents=True, exist_ok=True)
@@ -1123,14 +1128,12 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
         time_attr="training_iteration", max_t=400, grace_period=20
     )
 
-    # train_fn_with_parameters = tune.with_parameters(train_model, recipe=recipe)
-
     train_fn_with_parameters = tune.with_parameters(
         _train_model, recipe=recipe, num_cross_validation_fold=num_cross_validation_fold
     )
 
     tuner = tune.Tuner(
-        tune.with_resources(train_fn_with_parameters, resources={"cpu": 15, "gpu": 1}),
+        tune.with_resources(train_fn_with_parameters, resources={"cpu": recipe['tuner_settings']['cpus_per_trial'], "gpu": 1}),
         tune_config=tune.TuneConfig(
             metric="mean_accuracy",
             mode="max",
@@ -1143,14 +1146,9 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
                 "mean_accuracy": 0.90,
                 "training_iteration": num_training_iterations,
             },
-            storage_path=os.path.join(recipe["SAVE_PATH"], "ray_tuner"),
+            # storage_path=Path(os.path.join(recipe["SAVE_PATH"], "ray_tuner")),
         ),
-        # param_space={
-        #     "learning_rate": tune.uniform(0.001, 0.1),
-        #     "momentum": tune.uniform(0.1, 0.9),
-        #     "optimizer": tune.choice(["SGD", "ADAM"]),
-        #     "loss": tune.choice(["MCC", "CCE", "MCC_and_CCE_Loss"]),
-        # },
+
         param_space={
             "learning_rate": tune.uniform(
                 recipe["tuner_settings"]["learning_rate_range"][0],
@@ -1162,6 +1160,10 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
             ),
             "optimizer": tune.choice(recipe["tuner_settings"]["optimizer"]),
             "loss": tune.choice(recipe["tuner_settings"]["loss"]),
+            "fraction_of_layers_to_freeze": tune.uniform(recipe["tuner_settings"]["range_fraction_conv_layers_to_freeze"][0],recipe["tuner_settings"]["range_fraction_conv_layers_to_freeze"][1]),
+            "nbr_classification_layers": tune.sample_from(lambda _: np.random.randint(0, recipe["tuner_settings"]["max_nbr_classification_layers"], 1)[0]),
+            "nbr_nodes_classification_layer": tune.sample_from(lambda config: np.random.randint(low=np.log2(recipe['tuner_settings']['min_number_nodes_classification_layers']), high=np.log2(recipe['tuner_settings']['max_number_nodes_classification_layers']), size=config['nbr_classification_layers'])**2),
+            "pool_type": tune.choice(recipe["tuner_settings"]["pool_type"]),
         },
     )
     results = tuner.fit()
@@ -1180,7 +1182,7 @@ def _run_recipe(recipe):
         logger.info("Running script in hyper parameter tuning mode.")
 
         for cv_f in range(recipe["dataloader_settings"]["num_folds"]):
-            _tune_CBTN(
+         _tune_CBTN(
                 num_training_iterations=recipe["training_settings"]["max_epochs"],
                 num_cross_validation_fold=cv_f,
             )

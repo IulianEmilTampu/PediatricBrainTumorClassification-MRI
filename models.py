@@ -257,6 +257,10 @@ def ResNet50(
     debug: bool = False,
     pretrained: bool = True,
     freeze_weights: bool = False,
+    fraction_of_layers_to_freeze: float = None,
+    nbr_classification_layers: int = None,
+    nbr_nodes_classification_layer: Union[list, tuple] = None,
+    pool_type: str = None,
 ):
     """
     Make sure not to use the functional API if not you get a
@@ -265,7 +269,7 @@ def ResNet50(
 
     denseRegularizer = "L2"
     denseConstrain = None
-    denseActivation = None
+    denseActivation = 'relu'
     denseDropoutRate = 0.8
 
     img_input = Input(shape=input_shape, name="image")
@@ -275,19 +279,31 @@ def ResNet50(
     resnet50 = tf.keras.applications.resnet.ResNet152(
         include_top=False,
         weights="imagenet" if pretrained else None,
-        pooling="avg",
+        pooling=pool_type,
         input_tensor=x,
     )
 
     # froze model layers
     if freeze_weights:
-        resnet50.trainable = False
+        # use the fraction_of_conv_layers_to_freeze to freeze layers from the bottom (ResNet50 has 50 layers. setting fraction_of_layers_to_freeze to 1 will freeze everything)
+        for layer in resnet50.layers[::int(len(resnet50.layers)*fraction_of_layers_to_freeze)]:
+            layer.trainable = False
 
     # build model
     x = BatchNormalization()(resnet50.output)
     x = Dropout(denseDropoutRate)(x)
 
     # classifier
+    for i in range(nbr_classification_layers):
+        # add classification layers
+        x = Dense(
+        units=nbr_nodes_classification_layer[i],
+        activation=denseActivation,
+        kernel_regularizer=denseRegularizer,
+        kernel_constraint=denseConstrain,
+        name = f'classification_layer_{i+1}'
+    )(x)
+        
     # x = Dense(
     #     units=128,
     #     activation=denseActivation,

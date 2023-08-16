@@ -24,6 +24,7 @@ def img_data_generator(
     return_gradCAM: bool = False,
     path_to_GradCAMs: str = None,
     return_age: bool = False,
+    normalize_age: bool = False,
     batch_size: int = 32,
     buffer_size: int = None,
     nbr_classes: int = 2,
@@ -742,13 +743,10 @@ def get_normalization_values(
     Stript that loops trough the dataset and gets the mean and std used for normalizing the
     images, gradcams and age if required
     """
-    # iterator = tf.compat.v1.data.make_one_shot_iterator(dataset)
-    # next_element = iterator.get_next()
-    # with tf.compat.v1.Session() as sess:
+
     img, gradCAM, age = [], [], []
     ds_iter = iter(dataset)
     for _ in range(dataset_steps):
-        # sample = sess.run(next_element)
         sample = next(ds_iter)
         img.append(sample[0]["image"][:, :, :, 0])
         if return_gradCAM_norm_values:

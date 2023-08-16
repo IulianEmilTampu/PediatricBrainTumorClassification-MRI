@@ -273,10 +273,10 @@ def ResNet50(
     denseDropoutRate = 0.8
 
     img_input = Input(shape=input_shape, name="image")
-    x = tf.keras.applications.resnet50.preprocess_input(img_input)
+    x = tf.keras.applications.resnet_v2.preprocess_input(img_input)
 
     # use EfficientNet from keras as feature extractor
-    resnet50 = tf.keras.applications.resnet.ResNet152(
+    resnet50 = tf.keras.applications.resnet_v2.ResNet50V2(
         include_top=False,
         weights="imagenet" if pretrained else None,
         pooling=pool_type,

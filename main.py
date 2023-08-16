@@ -24,6 +24,7 @@ from ray import air, tune
 from ray.tune.schedulers import AsyncHyperBandScheduler
 from ray.tune.integration.keras import TuneReportCallback
 from ray.tune.search import ConcurrencyLimiter
+from ray.air import session
 
 # local imports
 import data_utilities
@@ -1050,14 +1051,48 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
 
     model = _build_model_based_on_recipe(recipe, config)
 
+    # specify learning rate scheduler
+    if config['learning_rate_scheduler'] == 'linear':
+        learning_rate_sc = None
+    elif config['learning_rate_scheduler'] == 'step':
+        # here the learning rate is kept as the one set for the first 30% of the steps (epoch * training steps), 
+        # then it is halfed for the next 30% and halfed again untill the end
+        boundaries = [int(train_steps*recipe["training_settings"]["max_epochs"]*0.3), int(train_steps*recipe["training_settings"]["max_epochs"]*0.6)]
+        values = [config["learning_rate"], config["learning_rate"]/2, config["learning_rate"]/4]
+        learning_rate_sc = tf.keras.optimizers.schedules.PiecewiseConstantDecay(
+    boundaries, values)
+    elif config['learning_rate_scheduler'] == 'polinomial':
+        learning_rate_sc = tf.keras.optimizers.schedules.PolynomialDecay(
+            config["learning_rate"],
+            1,
+            end_learning_rate=0.00001,
+            power=0.9,
+            cycle=False,
+            name=None
+        )
+    elif config['learning_rate_scheduler'] == 'cyclical_learning_rate':
+        learning_rate_sc =  tfa.optimizers.CyclicalLearningRate(
+        initial_learning_rate=config["learning_rate"] * 0.1,
+        maximal_learning_rate=config["learning_rate"]*10,
+        scale_fn=lambda x: 1 / (2.0 ** (x - 1)),
+        step_size=2 * train_steps,
+    )
+    else:
+        learning_rate_sc = None
+
     # specify optimizer
     if config["optimizer"] == "SGD":
         optimizer = tf.keras.optimizers.SGD(
-            learning_rate=config["learning_rate"], momentum=config["momentum"]
+            learning_rate=learning_rate_sc if learning_rate_sc else config["learning_rate"], momentum=config["momentum"]
         )
     elif config["optimizer"] == "ADAM":
+        optimizer = tfa.optimizers.Adam(
+            learning_rate=learning_rate_sc if learning_rate_sc else config["learning_rate"],
+            weight_decay=0.0001,
+        )
+    elif config["optimizer"] == "ADAMW":
         optimizer = tfa.optimizers.AdamW(
-            learning_rate=config["learning_rate"],
+            learning_rate=learning_rate_sc if learning_rate_sc else config["learning_rate"],
             weight_decay=0.0001,
         )
 
@@ -1065,9 +1100,6 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
     if config["loss"] == "MCC":
         # logger.info(f"Using MCC loss.")
         loss = losses.MCC_Loss()
-        what_to_monitor = tfa.metrics.MatthewsCorrelationCoefficient(
-            num_classes=recipe["dataloader_settings"]["num_classes"]
-        )
     elif config["loss"] == "MCC_and_CCE_Loss":
         # logger.info(f"Using sum of MCC and CCE loss.")
         loss = losses.MCC_and_CCE_Loss()
@@ -1085,10 +1117,13 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
     model.compile(
         loss=loss,
         optimizer=optimizer,
-        metrics=["accuracy"],
+        metrics=["accuracy", 
+                 tfa.metrics.MatthewsCorrelationCoefficient(
+            num_classes=recipe["dataloader_settings"]["num_classes"]
+        )],
     )
 
-    # specify callbacks
+    # specify callbacks (printing while running the HP tuner breaks the run since mtplotlib creates a new CPU thread for plotting disrupting the one that is currently running)
     callbacks_list = [
         # tf_callbacks.LossAndErrorPrintingCallback(
         #   save_path=os.path.join(
@@ -1096,14 +1131,14 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
         #   ),
         #   print_every_n_epoch=10,
         #),
-        # tf_callbacks.SaveBestModelWeights(
-        #    save_path=os.path.join(
-        #        recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}"
-        #    ),
-        #    monitor="val_loss",
-        #    mode="min",
-        #),
-        TuneReportCallback({"mean_accuracy": "val_accuracy"}),
+        tf_callbacks.SaveBestModelWeights(
+           save_path=os.path.join(
+               recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}',f'{session.get_experiment_name()}_{session.get_trial_id()}"
+           ),
+           monitor="val_loss",
+           mode="min",
+        ),
+        TuneReportCallback({"mean_accuracy": "val_accuracy", 'mean_MatthewsCorrelationCoefficient':'val_MatthewsCorrelationCoefficient', 'mean_loss':'val_loss'}),
     ]
 
     model.fit(
@@ -1117,8 +1152,7 @@ def _train_model(config, recipe=None, num_cross_validation_fold=None):
         callbacks=callbacks_list,
     )
 
-
-def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
+def _tune_CBTN(recipe, num_cross_validation_fold):
     # make folder for saving training information
     Path(
         os.path.join(recipe["SAVE_PATH"], f"fold_{num_cross_validation_fold+1}")
@@ -1135,18 +1169,23 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
     tuner = tune.Tuner(
         tune.with_resources(train_fn_with_parameters, resources={"cpu": recipe['tuner_settings']['cpus_per_trial'], "gpu": 1}),
         tune_config=tune.TuneConfig(
-            metric="mean_accuracy",
+            metric="mean_MatthewsCorrelationCoefficient",
             mode="max",
             scheduler=sched,
             num_samples=recipe["tuner_settings"]["num_samples"],
         ),
+
         run_config=air.RunConfig(
-            name=f"fold_{num_cross_validation_fold+1}",
+            name=f"exp_{datetime.now().strftime('t%H%M_d%m%d%Y')}",
             stop={
-                "mean_accuracy": 0.90,
-                "training_iteration": num_training_iterations,
+                "mean_MatthewsCorrelationCoefficient": 0.90,
+                "training_iteration": recipe['training_settings']['max_epochs'],
             },
-            # storage_path=Path(os.path.join(recipe["SAVE_PATH"], "ray_tuner")),
+            checkpoint_config = ray.air.CheckpointConfig(
+                num_to_keep = 1,
+                checkpoint_score_attribute ='mean_MatthewsCorrelationCoefficient',
+                checkpoint_score_order = 'max',
+            ),
         ),
 
         param_space={
@@ -1164,12 +1203,22 @@ def _tune_CBTN(num_training_iterations, num_cross_validation_fold):
             "nbr_classification_layers": tune.sample_from(lambda _: np.random.randint(0, recipe["tuner_settings"]["max_nbr_classification_layers"], 1)[0]),
             "nbr_nodes_classification_layer": tune.sample_from(lambda config: np.random.randint(low=np.log2(recipe['tuner_settings']['min_number_nodes_classification_layers']), high=np.log2(recipe['tuner_settings']['max_number_nodes_classification_layers']), size=config['nbr_classification_layers'])**2),
             "pool_type": tune.choice(recipe["tuner_settings"]["pool_type"]),
+            "learning_rate_scheduler": tune.choice(recipe["tuner_settings"]["learning_rate_scheduler"]),
         },
     )
     results = tuner.fit()
 
-    print("Best hyperparameters found were: ", results.get_best_result().config)
+    # print best trial settings
+    best_trial = results.get_best_result(metric="mean_MatthewsCorrelationCoefficient", mode="max", scope="all")
 
+    # get tag from best_trial path
+    trial_ID = '_'.join(os.path.basename(best_trial.path).split('_')[0:5])
+
+    print("Best trial config: {}".format(best_trial.config))
+    print("Best trial final validation MCC: {}".format(best_trial.metrics["mean_MatthewsCorrelationCoefficient"]))
+    print("Best trial final validation accuracy: {}".format(best_trial.metrics["mean_accuracy"]))
+    print("Best trial final validation loss: {}".format(best_trial.metrics["mean_loss"]))
+    print("Best trial ID: {}".format(trial_ID))
 
 def _run_recipe(recipe):
     """
@@ -1182,9 +1231,8 @@ def _run_recipe(recipe):
         logger.info("Running script in hyper parameter tuning mode.")
 
         for cv_f in range(recipe["dataloader_settings"]["num_folds"]):
-         _tune_CBTN(
-                num_training_iterations=recipe["training_settings"]["max_epochs"],
-                num_cross_validation_fold=cv_f,
+         _tune_CBTN(recipe,
+                    num_cross_validation_fold=cv_f,
             )
 
     elif recipe["script_running_mode"] == "train":

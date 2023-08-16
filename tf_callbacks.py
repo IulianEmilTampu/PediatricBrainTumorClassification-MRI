@@ -121,7 +121,7 @@ class SaveBestModelWeights(tf.keras.callbacks.Callback):
         if self.mode == "max":
             if metric_value > self.best:
                 print(
-                    f"Saving model weight callBack. Monitor {self.monitor}, mode {self.mode}"
+                    f"Saving model weight Callback. Monitor {self.monitor}, mode {self.mode}"
                 )
                 print(f"Current best: {self.best}")
                 print(f"Current value: {metric_value}")
@@ -138,7 +138,7 @@ class SaveBestModelWeights(tf.keras.callbacks.Callback):
         else:
             if metric_value < self.best:
                 print(
-                    f"Saving model weight callBack. Monitor {self.monitor}, mode {self.mode}"
+                    f"Saving model weight Callback. Monitor {self.monitor}, mode {self.mode}"
                 )
                 print(f"Current best: {self.best}")
                 print(f"Current value: {metric_value}")
@@ -151,7 +151,6 @@ class SaveBestModelWeights(tf.keras.callbacks.Callback):
                     save_format="h5",
                     include_optimizer=False,
                 )
-
 
 class LRFind(tf.keras.callbacks.Callback):
     def __init__(self, min_lr, max_lr, n_rounds):

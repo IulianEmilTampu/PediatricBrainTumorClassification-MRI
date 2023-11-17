@@ -1,0 +1,55 @@
+working_dir: ${hydra:runtime.cwd}
+
+dataloader_settings:
+  dataset_path: /flush2/iulta54/Data/CBTN_v1/FILTERED_SLICES_RLP_20_80
+  # dataset_path: /flush3/iulta54/Data/TCGA/dataset224_t2_transversal_30_70
+  batch_size: 32
+  augmentation: True
+  nbr_workers: 15
+  classes_of_interest: ['ASTROCYTOMA', 'EPENDYMOMA', 'MEDULLOBLASTOMA']
+  # classes_of_interest: ['G2', 'G3', 'G4']
+  class_stratification: True
+  test_size: 0.2
+  input_size: [224, 224]
+  randomize_subject_labels: False
+  randomize_slice_labels : False
+  select_slices_in_range : null
+
+
+augmentation_settings:
+  rotation: 45
+  brigntess_rage: 0.5
+  contrast_rage: 0.5
+  saturation: 0.5
+  hue: 0.1
+
+model_settings:
+  model_version: ResNet50 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
+  pre_trained: True
+  freeze_weights: True
+  percentage_freeze_weights: 0.6
+  mlp_nodes: [512]
+
+training_settings:
+  epochs: 600
+  patience: 600
+  learning_rate: 0.00001
+  optimizer : adam # adamw, sgd, adam
+  scheduler : exponential # linear_decay, cyclical, reduce_on_plateau, static
+  use_look_ahead_wrapper : False
+  use_class_weights: True
+  random_state: 20091229
+  nbr_repetitions: 1 # repetitions of cross validation
+  nbr_inner_cv_folds: 3 # number of cross validations in each repetition
+  run_testing: False # set to true only when model hiperparameters are tuned to get the final evaluation
+  
+debugging_settings:
+  dataset_fraction: 1.0
+
+logging_settings:
+  checkpoint_path: ${hydra:runtime.cwd}/loogging
+  save_training_validation_test_hist: False
+  start_time: None
+
+resources:
+  gpu_nbr: 0

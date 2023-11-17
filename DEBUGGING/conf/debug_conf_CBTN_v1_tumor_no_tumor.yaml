@@ -1,0 +1,23 @@
+dataset_path: /flush/iulta54/Data/CBTN_v1/T2_TUMOR_and_NO_TUMOR_SLICES
+path_to_dataset_split: /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/CBNT_data_split_information_tumor_no_tumor_29042023.csv
+root_save_path : /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/trained_models
+save_path: []
+classes_to_use:
+  - 1
+  - 0
+fold_name: "fold_1" # fold_1, fold_2, fold_3
+model_version: "SDM4"  # RESNET9, BARE_BONE_CNN_NORMALIZED, BARE_BONE_CNN, SDM4
+optimizer: "ADAM"  # ADAM
+use_lookAhead : True
+scheduler: "CONSTANT"  # EXPONENTIAL, CONSTANT, LINEAR
+base_lr: 0.00001
+max_lr: 0.1
+exponential_decay: 0.995
+batch_size : 16
+max_epochs : 100
+save_histograms: False
+class_weights : 
+gpu_nbr : 0
+nbr_workers : 
+seed: 42
+

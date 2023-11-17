@@ -1,0 +1,20 @@
+dataset_path: /flush3/iulta54/Data/Dataset/not_shuffled
+root_save_path : /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/trained_models
+save_path: []
+classes_to_use:
+  - "without_tumor"
+  - "with_tumor"
+model_version: "BARE_BONE_CNN"  # RESNET9, BARE_BONE_CNN_NORMALIZED, BARE_BONE_CNN, SDM4
+optimizer: "ADAM"  # ADAM
+scheduler: "EXPONENTIAL"  # EXPONENTIAL, CONSTANT, LINEAR
+base_lr: 0.0001
+max_lr: 0.1
+exponential_decay: 0.995
+batch_size : 64
+max_epochs : 50
+save_histograms: False # TODO
+class_weights : 
+gpu_nbr : 0
+nbr_workers : 
+seed: 42
+

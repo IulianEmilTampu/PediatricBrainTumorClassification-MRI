@@ -1,0 +1,24 @@
+dataset_path: /flush/iulta54/Data/CBTN_v1/T2_TUMOR_and_NO_TUMOR_SLICES
+path_to_dataset_split: /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/CBNT_data_split_information_tumor_no_tumor_29042023.csv
+root_save_path: /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/trained_models
+save_path: /flush/iulta54/P5-PedMRI_CBTN_v1/DEBUGGING/trained_models/TESTs_CBTN_tumor_detection_231110/SDM4_opt_ADAM_sch_CONSTANT_lr_1e-05_fold_fold_1_expdec_None_1546
+classes_to_use:
+- 1
+- 0
+fold_name: fold_1
+model_version: SDM4
+optimizer: ADAM
+use_lookAhead: true
+scheduler: CONSTANT
+base_lr: 1.0e-05
+max_lr: 0.1
+exponential_decay: 0.995
+batch_size: 16
+max_epochs: 50
+save_histograms: false
+class_weights:
+- 0.6533599144218614
+- 2.1301521876981613
+gpu_nbr: 0
+nbr_workers: 40
+seed: 42

@@ -1,7 +1,7 @@
 working_dir: ${hydra:runtime.cwd}
 
 dataloader_settings:
-  dataset_path: /flush2/iulta54/Data/CBTN_v1/FILTERED_SLICES_RLP_20_80
+  dataset_path: /flush2/iulta54/Data/CBTN_v1/HIGH_PASS_FILTER_0.05_FILTERED_SLICES_RLP_20_80_231117
   # dataset_path: /flush3/iulta54/Data/TCGA/dataset224_t2_transversal_30_70
   batch_size: 32
   augmentation: True
@@ -52,4 +52,4 @@ logging_settings:
   start_time: None
 
 resources:
-  gpu_nbr: 0
+  gpu_nbr: 1

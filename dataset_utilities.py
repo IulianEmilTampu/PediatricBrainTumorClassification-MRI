@@ -384,25 +384,22 @@ class PNGDatasetFromFolder(Dataset):
             # just convert to tensor
             tensor_image = T.functional.pil_to_tensor(image)
         # compose what needs to be returned
-        label, age, item_path = 0, 0, 0
+        label, age = 0, 0
 
         if self.labels:
             label = self.labels[item_index]
+        
+        if self.return_age:
+            age = 0
+        
         if self.return_file_path:
             item_path = item_path
-
-        # return label as well
-        if self.labels:
-            label = self.labels[item_index]
-            if self.return_file_path:
-                return tensor_image, label, item_path
-            else:
-                return tensor_image, label
+        
+        # this is ugly, but it works when debugging
+        if any([self.return_age, self.return_file_path]):
+            return tensor_image, label, age, item_path
         else:
-            if self.return_file_path:
-                return tensor_image, 0, item_path
-            else:
-                return tensor_image, 0
+            return tensor_image, label
 
 
 class CustomDataset(pl.LightningDataModule):

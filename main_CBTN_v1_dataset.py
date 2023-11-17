@@ -321,13 +321,15 @@ def run_training(config: dict) -> None:
                     "target"
                 ]
             )
-
+            # print('#######################\nNOTE! Training and validationg on the same set!!!!\n#######################')
             training_dataloader = dataset_utilities.CustomDataset(
                 train_sample_paths=files_for_training,
                 validation_sample_paths=files_for_validation,
+                # validation_sample_paths=files_for_training,
                 test_sample_paths=files_for_testing,
                 training_targets=training_targets,
                 validation_targets=validation_targets,
+                # validation_targets=training_targets,
                 test_targets=test_targets,
                 batch_size=config["dataloader_settings"]["batch_size"],
                 num_workers=config["dataloader_settings"]["nbr_workers"],

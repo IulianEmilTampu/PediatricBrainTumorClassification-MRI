@@ -28,7 +28,43 @@ import torchvision.transforms as T
 
 import pytorch_lightning as pl
 
+def get_dataset_heuristics(config):
+    '''
+    Utility that given the config dictionary returns the heuristics for:
+    - file discovery;
+    - subject ID extraction;
+    - class extraction;
+    - rlp extraction.
 
+    for the datasets available in ~/conf/dataset
+    '''
+    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = None, None, None, None
+
+    if config['dataset']['name'].lower() == 'cbtn_tumor_detection':
+        heuristic_for_file_discovery = "*.png" 
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
+        heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[-1].split('.')[0].split('_')[-1]
+        heuristic_for_rlp_extraction = lambda x: float(
+        os.path.basename(x).split("___")[5].split("_")[-1]
+    )
+    elif config['dataset']['name'].lower() == 'cbtn_tumor_classification':
+        heuristic_for_file_discovery = "*.png"
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
+        heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
+        heuristic_for_rlp_extraction = lambda x: float(
+        os.path.basename(x).split("___")[5].split("_")[-1]
+    )
+    # elif config['dataset']['name'].lower() == 'tcga_tumor_detection':
+    #     heuristic_for_file_discovery = "*.png"
+    #     heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
+    elif config['dataset']['name'].lower() == 'tcga_tumor_classification':
+        heuristic_for_file_discovery = "*.png"
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
+        heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]
+    else:
+        raise ValueError(f'The given dataset name does not macth any of the available dataset. Given {config["dataset"]["name"]}.\nIf needed, add the .yaml file for the dataset in the ~/conf/dataset folder and add here the heuristics needed.')
+    
+    return heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction
 def _get_split(
     config: dict,
     heuristic_for_file_discovery,
@@ -161,7 +197,7 @@ def _get_split(
         return dataset_df
 
     dataset_df = _get_dataframe_from_dataset_folder(
-        path_to_dataset=config["dataloader_settings"]["dataset_path"],
+        path_to_dataset=config["dataset"]["dataset_path"],
         heuristic_for_file_discovery=heuristic_for_file_discovery,
         heuristic_for_subject_ID_extraction=heuristic_for_subject_ID_extraction,
         heuristic_for_class_extraction=heuristic_for_class_extraction,
@@ -169,15 +205,15 @@ def _get_split(
     )
 
     # trim based on requested classes
-    if len(config["dataloader_settings"]["classes_of_interest"]) != 0:
+    if len(config["dataset"]["classes_of_interest"]) != 0:
         dataset_df = dataset_df[
-            dataset_df.target.isin(config["dataloader_settings"]["classes_of_interest"])
+            dataset_df.target.isin(config["dataset"]["classes_of_interest"])
         ]
         # print stats
         print(
             f"ATTENTION!!! Using only limited number of classes. Check if this is indented."
         )
-        for c in config["dataloader_settings"]["classes_of_interest"]:
+        for c in config["dataset"]["classes_of_interest"]:
             print(
                 f"Found {len(dataset_df.loc[dataset_df.target == c])} files to work on for class {c} ({len(pd.unique(dataset_df.loc[dataset_df.target == c].subject_IDs))} unique subjects)."
             )
@@ -235,7 +271,7 @@ def _get_split(
         # get training set
         df_test_split = dataset_df.loc[test_ix].reset_index()
         print(
-            f'{"Test set":9s}: {len(test_ix):5d} {"test":10} files ({len(pd.unique(df_test_split["subject_IDs"])):4d} unique subjects ({config["dataloader_settings"]["classes_of_interest"]} {[len(pd.unique(df_test_split.loc[df_test_split.target == c].subject_IDs)) for c in config["dataloader_settings"]["classes_of_interest"]]}))'
+            f'{"Test set":9s}: {len(test_ix):5d} {"test":10} files ({len(pd.unique(df_test_split["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(df_test_split.loc[df_test_split.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
         )
 
         # get train_val set
@@ -274,11 +310,11 @@ def _get_split(
             # print summary
             aus_df = df_train_val_split.loc[train_ix]
             print(
-                f'Fold {cv_f+1:4d}: {len(train_ix):5d} {"training":10} files ({len(pd.unique(df_train_val_split.loc[train_ix]["subject_IDs"])):4d} unique subjects ({config["dataloader_settings"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataloader_settings"]["classes_of_interest"]]}))'
+                f'Fold {cv_f+1:4d}: {len(train_ix):5d} {"training":10} files ({len(pd.unique(df_train_val_split.loc[train_ix]["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
             )
             aus_df = df_train_val_split.loc[val_ix]
             print(
-                f'Fold {cv_f+1:4d}: {len(val_ix):5d} {"validation":10} files ({len(pd.unique(df_train_val_split.loc[val_ix]["subject_IDs"])):4d} unique subjects ({config["dataloader_settings"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataloader_settings"]["classes_of_interest"]]}))'
+                f'Fold {cv_f+1:4d}: {len(val_ix):5d} {"validation":10} files ({len(pd.unique(df_train_val_split.loc[val_ix]["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
             )
 
             if cv_f + 1 == config["training_settings"]["nbr_inner_cv_folds"]:

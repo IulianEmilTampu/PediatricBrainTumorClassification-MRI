@@ -167,7 +167,7 @@ def set_up(config: dict):
     # ---------------------
     # SEED EVERYTHING
     # ---------------------
-    pl.seed_everything(42)  # To be reproducable
+    pl.seed_everything(config["training_settings"]['random_state'])  # To be reproducable
 
 
 def run_training(config: dict) -> None:
@@ -252,14 +252,16 @@ def run_training(config: dict) -> None:
         ],
     )
 
-    # ## get splits based on the configuration
-    heuristic_for_file_discovery = "*.png"
+
+    # ## get heuristics for this dataset type
+    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = dataset_utilities.get_dataset_heuristics(config)
+    # heuristic_for_file_discovery = "*.png"
     ### heuristics for CBTN
-    heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
-    heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
-    heuristic_for_rlp_extraction = lambda x: float(
-        os.path.basename(x).split("___")[5].split("_")[-1]
-    )
+    # heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
+    # heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
+    # heuristic_for_rlp_extraction = lambda x: float(
+    #     os.path.basename(x).split("___")[5].split("_")[-1]
+    # )
     # # ### heuristics for TCGA
     # heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
     # heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]
@@ -380,6 +382,7 @@ def run_training(config: dict) -> None:
 
             model = model_bucket_CBTN_v1.LitModelWrapper(
                 version=MODEL.lower(),
+                nbr_classes=len(config['dataset']['classes_of_interest']),
                 pretrained=PRETRAINED,
                 freeze_percentage=PERCENTAGE_FROZEN,
                 class_weights=CLASS_WEIGHTS,

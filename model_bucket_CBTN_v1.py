@@ -136,7 +136,7 @@ class ResNets(torch.nn.Module):
             if pretrained:
                 # laod model from .pth
                 self.model.load_state_dict(
-                    torch.load("/flush/iulta54/P5-PedMRI_CBTN_v1/resnet9.pth")
+                    torch.load(os.path.load(os.getcwd(), "pretrained_models/resnet9.pth"))
                 )
 
         # ## freeze parts of the model as specified

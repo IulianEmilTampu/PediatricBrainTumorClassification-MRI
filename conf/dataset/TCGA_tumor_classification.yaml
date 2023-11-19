@@ -1,0 +1,3 @@
+name: TCGA_tumor_classification
+dataset_path: /flush3/iulta54/Data/TCGA/dataset224_t2_transversal_30_70
+classes_of_interest: ['G2', 'G3', 'G4'] 

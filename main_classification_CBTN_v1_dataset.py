@@ -206,6 +206,12 @@ def run_training(config: dict) -> None:
         # use MR stats since the encoder weights are trained
         img_mean = MR_mean
         img_std = MR_std
+    
+    img_mean = MR_mean
+    img_std = MR_std
+
+    config["dataloader_settings"]["img_mean"] = img_mean.tolist()
+    config["dataloader_settings"]["img_std"] = img_std.tolist()
 
     # ## define preprocessing
     preprocess = T.Compose(
@@ -241,10 +247,11 @@ def run_training(config: dict) -> None:
                 ],
                 p=0.5,
             ),
-            # T.TrivialAugmentWide(
-            #     num_magnitude_bins=15, fill=-1
-            # ),  # this augmentatiton works well for RGB images, but might help with generalization
+            T.TrivialAugmentWide(
+                num_magnitude_bins=15, fill=-1
+            ),  # this augmentatiton works well for RGB images, but might help with generalization
             T.ToTensor(),
+            T.RandomApply([dataset_utilities.AddGaussianNoise(mean=0, std=5)], p=0),
             T.Normalize(
                 mean=img_mean,
                 std=img_std,
@@ -364,7 +371,7 @@ def run_training(config: dict) -> None:
                 )
 
             # %% TRAIN MODEL
-            save_name = f"{MODEL}_pretrained_{PRETRAINED}_frozen_{FROZE_WEIGHTS}_{PERCENTAGE_FROZEN}_LR_{LEARNING_RATE}_BATCH_{BATCH_SIZE}_AUGMENTATION_{config['dataloader_settings']['augmentation']}_OPTIM_{config['training_settings']['optimizer']}_SCHEDULER_{config['training_settings']['scheduler']}_MLPNODES_{config['model_settings']['mlp_nodes'][0]}_{config['logging_settings']['start_time']}"
+            save_name = f"{MODEL}_pretrained_{PRETRAINED}_frozen_{FROZE_WEIGHTS}_{PERCENTAGE_FROZEN}_LR_{LEARNING_RATE}_BATCH_{BATCH_SIZE}_AUGMENTATION_{config['dataloader_settings']['augmentation']}_OPTIM_{config['training_settings']['optimizer']}_SCHEDULER_{config['training_settings']['scheduler']}_MLPNODES_{config['model_settings']['mlp_nodes'][0] if len(config['model_settings']['mlp_nodes'])!=0 else 0}_{config['logging_settings']['start_time']}"
             save_path = os.path.join(
                 config["working_dir"],
                 "trained_model_archive",
@@ -382,7 +389,7 @@ def run_training(config: dict) -> None:
 
             model = model_bucket_CBTN_v1.LitModelWrapper(
                 version=MODEL.lower(),
-                nbr_classes=len(config['dataset']['classes_of_interest']),
+                nbr_classes=len(pd.unique(dataset_split_df['target'])),
                 pretrained=PRETRAINED,
                 freeze_percentage=PERCENTAGE_FROZEN,
                 class_weights=CLASS_WEIGHTS,
@@ -400,7 +407,7 @@ def run_training(config: dict) -> None:
             # save model architecture to file
             old_stdout = sys.stdout
             try:
-                if model_settings['model_version'].lower() != 'vit':
+                if config["model_settings"]['model_version'].lower() != 'vit':
                     logger.info("Saving model architecture to file...")
                     MODEL_SUMMARY_LOG_FILE = open(
                         os.path.join(save_path, "model_architecture.log"), "w"
@@ -414,6 +421,7 @@ def run_training(config: dict) -> None:
                             INPUT_SIZE[1],
                         ),
                     )
+                    print(model)
                     MODEL_SUMMARY_LOG_FILE.close()
                     logger.info("Done!")
             except:

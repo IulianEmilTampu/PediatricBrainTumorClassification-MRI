@@ -21,12 +21,25 @@ from sklearn.model_selection import (
 from sklearn.utils import class_weight
 
 import torch
+import torch.nn.functional as nnf
 from torch.utils.data import DataLoader, Dataset
 
 from torchvision import datasets
 import torchvision.transforms as T
 
 import pytorch_lightning as pl
+
+
+class AddGaussianNoise(object):
+    def __init__(self, mean=0., std=1.):
+        self.std = std
+        self.mean = mean
+        
+    def __call__(self, tensor):
+        return tensor + torch.randn(tensor.size()) * self.std + self.mean
+    
+    def __repr__(self):
+        return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
 def get_dataset_heuristics(config):
     '''
@@ -65,6 +78,8 @@ def get_dataset_heuristics(config):
         raise ValueError(f'The given dataset name does not macth any of the available dataset. Given {config["dataset"]["name"]}.\nIf needed, add the .yaml file for the dataset in the ~/conf/dataset folder and add here the heuristics needed.')
     
     return heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction
+
+
 def _get_split(
     config: dict,
     heuristic_for_file_discovery,
@@ -196,6 +211,33 @@ def _get_split(
 
         return dataset_df
 
+    def merge_targets(dataset_df, merging_specification:dict):
+        '''
+        Utility that given the megring specification dictionary, aggregates the target of different classes.
+        E.g.
+        merging_specification = {'c1': [t1,t3], 'c2':[t2]}
+        Will assign to the new class c1 the original targets t1 and t2, while c1 to the original t2 target.
+
+        The function returns a new dataframe with the target changed and the original targets still saved.
+        '''
+        # check that the requested targets to aggregate are available in the original targets
+        unique_targe_classes = list(pd.unique(dataset_df['target']))
+        requested_targets = []
+        [requested_targets.extend(v) for v in merging_specification.values()]
+        unique_targe_classes.sort()
+        requested_targets.sort()
+        if not all([i == j for i,j in zip(unique_targe_classes, requested_targets)]):
+            raise ValueError(f'Get split - merge_targets: the merging specification targets and the original targets do not share the same classes.\nGiven {unique_targe_classes} as unique classes, and {requested_targets} in the merging specification.')
+        
+        # rename the target column in the dataset_df to original_target
+        dataset_df['original_target'] = dataset_df['target']
+        # merge targets
+        for new_target_name, merging_list in merging_specification.items():
+            # attribute to all the targets in the merging_list the new_target_name
+            dataset_df.loc[dataset_df['original_target'].map(lambda x: x in merging_list), 'target'] = new_target_name
+
+        return dataset_df
+
     dataset_df = _get_dataframe_from_dataset_folder(
         path_to_dataset=config["dataset"]["dataset_path"],
         heuristic_for_file_discovery=heuristic_for_file_discovery,
@@ -243,9 +285,13 @@ def _get_split(
             seed=config["training_settings"]["random_state"],
         )
 
+    if 'merge_specification' in config['dataset'].keys():
+        if config['dataset']['merge_specification']:
+            dataset_df = merge_targets(dataset_df, config['dataset']['merge_specification'])
+    
     # reset index before splitting, if not the stratified split breaks.
     dataset_df = dataset_df.reset_index()
-
+        
     # ################## work on splitting
     if config["dataloader_settings"]["class_stratification"]:
         print("Performing stratified data split (on a per subject bases).")
@@ -268,10 +314,10 @@ def _get_split(
             sgkf.split(dataset_df, y=dataset_df.target, groups=dataset_df.subject_IDs)
         )
 
-        # get training set
+        # get testing set
         df_test_split = dataset_df.loc[test_ix].reset_index()
         print(
-            f'{"Test set":9s}: {len(test_ix):5d} {"test":10} files ({len(pd.unique(df_test_split["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(df_test_split.loc[df_test_split.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
+            f'{"Test set":9s}: {len(test_ix):5d} {"test":10} files ({len(pd.unique(df_test_split["subject_IDs"])):4d} unique subjects ({pd.unique(df_test_split["target"])} {[len(pd.unique(df_test_split.loc[df_test_split.target == c].subject_IDs)) for c in list(pd.unique(df_test_split["target"]))]}))'
         )
 
         # get train_val set
@@ -310,11 +356,11 @@ def _get_split(
             # print summary
             aus_df = df_train_val_split.loc[train_ix]
             print(
-                f'Fold {cv_f+1:4d}: {len(train_ix):5d} {"training":10} files ({len(pd.unique(df_train_val_split.loc[train_ix]["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
+                f'Fold {cv_f+1:4d}: {len(train_ix):5d} {"training":10} files ({len(pd.unique(df_train_val_split.loc[train_ix]["subject_IDs"])):4d} unique subjects ({list(pd.unique(aus_df["target"]))} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in list(pd.unique(aus_df["target"]))]}))'
             )
             aus_df = df_train_val_split.loc[val_ix]
             print(
-                f'Fold {cv_f+1:4d}: {len(val_ix):5d} {"validation":10} files ({len(pd.unique(df_train_val_split.loc[val_ix]["subject_IDs"])):4d} unique subjects ({config["dataset"]["classes_of_interest"]} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in config["dataset"]["classes_of_interest"]]}))'
+                f'Fold {cv_f+1:4d}: {len(val_ix):5d} {"validation":10} files ({len(pd.unique(df_train_val_split.loc[val_ix]["subject_IDs"])):4d} unique subjects ({list(pd.unique(aus_df["target"]))} {[len(pd.unique(aus_df.loc[aus_df.target == c].subject_IDs)) for c in list(pd.unique(aus_df["target"]))]}))'
             )
 
             if cv_f + 1 == config["training_settings"]["nbr_inner_cv_folds"]:
@@ -452,7 +498,6 @@ class CustomDataset(pl.LightningDataModule):
         training_targets=None,
         validation_targets=None,
         test_targets=None,
-        # heuristic_for_class_extraction=None,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -471,20 +516,8 @@ class CustomDataset(pl.LightningDataModule):
         self.return_classes = True if training_targets else False
         # TODO make it work even when only train_sample_paths is given
 
-        # get classes
+        # sut up to retur targhets of needed
         if self.return_classes:
-            # self.train_per_sample_target_class = [
-            #     heuristic_for_class_extraction(str(f)) for f in self.train_sample_paths
-            # ]
-            # self.validation_per_sample_target_class = [
-            #     heuristic_for_class_extraction(str(f))
-            #     for f in self.validation_sample_paths
-            # ]
-            # if self.return_test_dataloader:
-            #     self.test_per_sample_target_class = [
-            #         heuristic_for_class_extraction(str(f))
-            #         for f in self.test_sample_paths
-            #     ]
 
             self.train_per_sample_target_class = training_targets
             self.validation_per_sample_target_class = validation_targets

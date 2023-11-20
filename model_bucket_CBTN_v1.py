@@ -770,7 +770,10 @@ class LitModelWrapper(pl.LightningModule):
             self.class_weights = torch.Tensor([1 for i in range(nbr_classes)])
 
         # define loss
-        self.loss_fn = nn.CrossEntropyLoss(weight=self.class_weights)
+        if nbr_classes == 2:
+            self.loss_fn = nn.BCEWithLogitsLoss(weight=self.class_weights)
+        else:
+            self.loss_fn = nn.CrossEntropyLoss(weight=self.class_weights)
 
         self.save_hyperparameters(
             logger=True,
@@ -887,6 +890,13 @@ class LitModelWrapper(pl.LightningModule):
                         name + "/grad", value.grad.cpu(), step
                     )
 
+    def log_weights(self, step=None):
+        for name, value in self.model.named_parameters():
+            if "bn" not in name:
+                self.loggers[0].experiment.add_histogram(
+                    name + "/weights", value.cpu(), step
+                )
+
     def training_step(self, batch, batch_idx):
         x, y = batch
         preds = self.model(x)
@@ -898,8 +908,9 @@ class LitModelWrapper(pl.LightningModule):
             "ptl/train_classification_loss", loss.item(), on_epoch=True, sync_dist=True
         )
         # log gradients
-        if self.trainer.global_step % 20 == 0:
+        if self.trainer.global_step % 400 == 0:
             self.log_gradients(step=self.trainer.global_step)
+            self.log_weights(step=self.trainer.global_step)
 
         # save one batch of images
         if len(self.training_step_img) == 0:

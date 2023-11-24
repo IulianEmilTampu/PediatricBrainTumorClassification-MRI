@@ -54,14 +54,14 @@ def get_dataset_heuristics(dataset_name):
     '''
     heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = None, None, None, None
 
-    if dataset_name.lower() == 'cbtn_tumor_detection':
+    if 'cbtn_tumor_detection' in dataset_name.lower():
         heuristic_for_file_discovery = "*.png" 
         heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
         heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[-1].split('.')[0].split('_')[-1]
         heuristic_for_rlp_extraction = lambda x: float(
         os.path.basename(x).split("___")[5].split("_")[-1]
     )
-    elif dataset_name.lower() == 'cbtn_tumor_classification':
+    elif 'cbtn_tumor_classification' in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
         heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
         heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
@@ -71,7 +71,7 @@ def get_dataset_heuristics(dataset_name):
     # elif dataset_name.lower() == 'tcga_tumor_detection':
     #     heuristic_for_file_discovery = "*.png"
     #     heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
-    elif dataset_name.lower() == 'tcga_tumor_classification':
+    elif 'tcga_tumor_classification' in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
         heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
         heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]

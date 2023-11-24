@@ -3,6 +3,7 @@ import os
 import sys
 import numpy as np
 from typing import Any, Tuple, Union
+from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -136,7 +137,7 @@ class ResNets(torch.nn.Module):
             if pretrained:
                 # laod model from .pth
                 self.model.load_state_dict(
-                    torch.load(os.path.load(os.getcwd(), "pretrained_models/resnet9.pth"))
+                    torch.load(os.path.join(os.getcwd(), "pretrained_models/resnet9.pth"))
                 )
 
         # ## freeze parts of the model as specified
@@ -269,37 +270,6 @@ class ResNets(torch.nn.Module):
                 dropout_rate=self.dropout_rate,
                 nbr_classes=self.nbr_classes,
             )
-
-    def _make_classification_mpl(
-        in_features: int,
-        mpl_nodes: list,
-        dropout_rate: Union[list, float],
-        nbr_classes: int,
-        add_pooling_layer: bool = False,
-    ):
-        # utility that builds the classification layers based on the specifications
-        classification_layers = torch.nn.Sequential()
-        if add_pooling_layer:
-            # add GlobalAveragePooling and flatten layer (ResNet9 needs it)
-            classification_layers.append(torch.nn.AdaptiveMaxPool2d((1, 1)))
-            classification_layers.append(torch.nn.Flatten())
-
-        # add layers
-        for nbr_nodes, dropout_rate in zip(mpl_nodes, dropout_rate):
-            classification_layers.append(
-                torch.nn.Linear(in_features=in_features, out_features=nbr_nodes)
-            )
-            classification_layers.append(nn.ReLU())
-            classification_layers.append(
-                torch.nn.Dropout(p=dropout_rate, inplace=False)
-            )
-            # update in_features
-            in_features = nbr_nodes
-
-        # add last layer
-        classification_layers.append(torch.nn.Linear(in_features, nbr_classes))
-
-        return classification_layers
 
     def forward(self, x):
         return self.model(x)
@@ -622,7 +592,6 @@ class RadImageNet(torch.nn.Module):
 
 
 # %% ViT
-
 class ViT_nomai(torch.nn.Module):
     def __init__(
         self,
@@ -686,14 +655,44 @@ class ViTs(torch.nn.Module):
                 f"({freeze_percentage}) (Automatic print): Freezing {nbr_enc_layer_to_freeze} encoding blocks out of {len(self.model.encoder.layers)}"
             )
         
-        # adapt the classification dead to the nunber of classification tasks
+        # adapt the classification head to the nunber of classification tasks
         self.model.heads[0] = torch.nn.Linear(in_features=768, out_features=nbr_classes)
         
     def forward(self, x):
         return self.model(x)
 
 
-# %% GENERAL WRAPPER
+
+# %% BUILD CLASSIFIER FROM SimCLR model 
+
+class ClassifierFromSimCLR(torch.nn.Module):
+    def __init__(self, SimCLR_model_path, nbr_classes, freeze_percentage:float=1.0, mpl_nodes:Union[list, tuple] = (1024), dropout_rate:Union[list, tuple, float]=0.2):
+        super(ClassifierFromSimCLR, self).__init__()
+        self.save_hyperparameters()
+
+        # laod model
+        if not os.path.isfile(self.SimCLR_model_path):
+            raise ValueError(f'The given model path for the SimCLR model is not available. Please check. Given {self.SimCLR_model_path}')
+        
+        self.model = torch.load(self.SimCLR_model_path)
+        self.model = self.model.convnet
+
+        # build classifier head 
+        if isinstance(self.dropout_rate, float):
+            self.dropout_rate = [self.dropout_rate for i in range(len(self.mpl_nodes))]
+        else:
+            assert len(self.dropout_rate) == len(
+                mpl_nodes
+            ), f"Single modality classification model build: the number of dropout rates and the number of mpl layers does not match. Given {len(dropout_rate)} and {len(nodes_in_mpl)}"
+            self.dropout_rate = self.dropout_rate
+
+        self.model.fc = make_classification_mpl(in_features=self.model.fc[0][0].in_features, mpl_nodes=self.mpl_nodes, dropout_rate=self.dropout_rate, nbr_classes=self.nbr_classes)
+    
+    def forward(self, x):
+        return self.model(x)
+
+
+# %% GENERAL LiT WRAPPER FOR CLASSIFICATION
 class LitModelWrapper(pl.LightningModule):
     def __init__(
         self,
@@ -711,6 +710,8 @@ class LitModelWrapper(pl.LightningModule):
         use_look_ahead_wrapper: bool = False,
         use_regularization: bool = False,
         mpl_nodes: Union[list, tuple] = (1024),
+        use_SimCLR_pretrained_model:bool = False,
+        SimCLR_model_path: str=None,
     ):
         super(LitModelWrapper, self).__init__()
 
@@ -725,38 +726,48 @@ class LitModelWrapper(pl.LightningModule):
         self.mpl_nodes = mpl_nodes
 
         # define model based on the version
-        if any([version == "resnet50", version == "resnet18", version == "resnet9"]):
-            self.model = ResNets(
-                nbr_classes=nbr_classes,
-                version=version,
-                pretrained=pretrained,
-                freeze_percentage=freeze_percentage,
-                mpl_nodes=mpl_nodes,
+        if use_SimCLR_pretrained_model:
+            # build model based on SimCLR pretrained model
+            self.model = ClassifierFromSimCLR(
+                SimCLR_model_path=SimCLR_model_path, 
+                nbr_classes=self.nbr_classes,
+                freeze_percentage=freeze_percentage, 
+                mpl_nodes=self.mpl_nodes, 
+                dropout_rate=0.2,
             )
-        elif version == "2dsdm4":
-            self.model = CustomModel(
-                nbr_classes=nbr_classes, conv_dropout_rate=0.4, dense_dropout_rate=0.2
-            )
-        elif version == "radresnet":
-            self.model = RadImageNet(
-                nbr_classes=nbr_classes, freeze_percentage=freeze_percentage
-            )
-        elif version == "inceptionv3":
-            self.model = InceptionV3(
-                nbr_classes=nbr_classes,
-                pretrained=pretrained,
-                freeze_percentage=freeze_percentage,
-                mpl_nodes=mpl_nodes,
-            )
-        elif any([version == "vit_b_16", version == "vit_b_32"]):
-            self.model = ViTs(nbr_classes=nbr_classes,
-                version=version,
-                pretrained=pretrained,
-                freeze_percentage=freeze_percentage)
-        else:
-            raise ValueError(
-                f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
-            )
+        else:        
+            if any([version == "resnet50", version == "resnet18", version == "resnet9"]):
+                self.model = ResNets(
+                    nbr_classes=nbr_classes,
+                    version=version,
+                    pretrained=pretrained,
+                    freeze_percentage=freeze_percentage,
+                    mpl_nodes=mpl_nodes,
+                )
+            elif version == "2dsdm4":
+                self.model = CustomModel(
+                    nbr_classes=nbr_classes, conv_dropout_rate=0.4, dense_dropout_rate=0.2
+                )
+            elif version == "radresnet":
+                self.model = RadImageNet(
+                    nbr_classes=nbr_classes, freeze_percentage=freeze_percentage
+                )
+            elif version == "inceptionv3":
+                self.model = InceptionV3(
+                    nbr_classes=nbr_classes,
+                    pretrained=pretrained,
+                    freeze_percentage=freeze_percentage,
+                    mpl_nodes=mpl_nodes,
+                )
+            elif any([version == "vit_b_16", version == "vit_b_32"]):
+                self.model = ViTs(nbr_classes=nbr_classes,
+                    version=version,
+                    pretrained=pretrained,
+                    freeze_percentage=freeze_percentage)
+            else:
+                raise ValueError(
+                    f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
+                )
 
         # check class weights
         if class_weights is not None:
@@ -1055,3 +1066,143 @@ class LitModelWrapper(pl.LightningModule):
             self.loggers[0].experiment.add_image(
                 title, imgs, self.trainer.current_epoch
             )
+
+# %% LiT WRAPPER FOR SimCLR training
+
+class SimCLRModelWrapper(pl.LightningModule):
+    def __init__(self, version:str = "resnet50", pretrained:bool=False,freeze_percentage: float = 1.0, hidden_dim:int=128, lr:float=0.001, temperature:float=0.07, weight_decay:float=1e-4, max_epochs=500):
+        super().__init__()
+        self.save_hyperparameters()
+        assert (
+            self.hparams.temperature > 0.0
+        ), "The temperature must be a positive float!"
+        
+        # Base model f(.)
+        # define model based on the version
+        if any([version == "resnet50", version == "resnet18", version == "resnet9"]):
+            self.convnet = ResNets(
+                nbr_classes=4 * hidden_dim,
+                version=version,
+                pretrained=pretrained,
+                freeze_percentage=freeze_percentage,
+                mpl_nodes=[],
+            ).model
+        elif version == "2dsdm4":
+            self.convnet = CustomModel(
+                nbr_classes=4 * hidden_dim, conv_dropout_rate=0.4, dense_dropout_rate=0.2
+            )
+        elif version == "radresnet":
+            self.convnet = RadImageNet(
+                nbr_classes=nbr_classes, freeze_percentage=freeze_percentage
+            ).model
+        elif version == "inceptionv3":
+            self.convnet = InceptionV3(
+                nbr_classes=4 * hidden_dim,
+                pretrained=pretrained,
+                freeze_percentage=freeze_percentage,
+                mpl_nodes=mpl_nodes,
+            ).model
+        elif any([version == "vit_b_16", version == "vit_b_32"]):
+            self.convnet = ViTs(nbr_classes=4 * hidden_dim,
+                version=version,
+                pretrained=pretrained,
+                freeze_percentage=freeze_percentage)
+        else:
+            raise ValueError(
+                f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
+            )
+        
+        # The MLP for g(.) consists of Linear->ReLU->Linear
+        self.convnet.fc = nn.Sequential(
+            self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
+            nn.ReLU(inplace=True),
+            nn.Linear(4 * hidden_dim, hidden_dim),
+        )
+
+        # for saving some training, validation, testing images
+        self.validation_step_img = []
+        self.training_step_img = []
+        self.test_step_img = []
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay,
+        )
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.hparams.max_epochs, eta_min=self.hparams.lr / 50
+        )
+        return [optimizer], [lr_scheduler]
+
+    def info_nce_loss(self, batch, mode="train"):
+        imgs, _ = batch
+        imgs = torch.cat(imgs, dim=0)
+
+        # Encode all images
+        feats = self.convnet(imgs)
+        # Calculate cosine similarity
+        cos_sim = F.cosine_similarity(feats[:, None, :], feats[None, :, :], dim=-1)
+        # Mask out cosine similarity to itself
+        self_mask = torch.eye(cos_sim.shape[0], dtype=torch.bool, device=cos_sim.device)
+        cos_sim.masked_fill_(self_mask, -9e15)
+        # Find positive example -> batch_size//2 away from the original example
+        pos_mask = self_mask.roll(shifts=cos_sim.shape[0] // 2, dims=0)
+        # InfoNCE loss
+        cos_sim = cos_sim / self.hparams.temperature
+        nll = -cos_sim[pos_mask] + torch.logsumexp(cos_sim, dim=-1)
+        nll = nll.mean()
+
+        # Logging loss
+        self.log("ptl/" + mode + "_loss", nll)
+        # Get ranking position of positive example
+        comb_sim = torch.cat(
+            [
+                cos_sim[pos_mask][:, None],  # First position positive example
+                cos_sim.masked_fill(pos_mask, -9e15),
+            ],
+            dim=-1,
+        )
+        sim_argsort = comb_sim.argsort(dim=-1, descending=True).argmin(dim=-1)
+        # Logging ranking metrics
+        self.log("ptl/" + mode + "_acc_top1", (sim_argsort == 0).float().mean())
+        self.log("ptl/" + mode + "_acc_top5", (sim_argsort < 5).float().mean())
+        self.log("ptl/" + mode + "_acc_mean_pos", 1 + sim_argsort.float().mean())
+
+        return nll
+
+    def training_step(self, batch, batch_idx):
+        return self.info_nce_loss(batch, mode="train")
+
+        # # save one batch of images
+        # if len(self.training_step_img) == 0:
+        #     self.training_step_img.append(batch[0].to("cpu"))
+
+    def validation_step(self, batch, batch_idx):
+        self.info_nce_loss(batch, mode="val")
+
+        # # save one batch of images
+        # if len(self.validation_step_img) == 0:
+        #     self.validation_step_img.append(x.to("cpu"))
+    
+    # TODO fix image plotting during training
+    # def on_train_epoch_end(self) -> None:
+    #     _imgs = torch.cat(self.training_step_img)
+    #     self.save_imgs(
+    #         _imgs,
+    #         title="Example_train_batch",
+    #     )
+    #     return
+
+    # def on_validation_epoch_end(self) -> None:
+    #     return
+
+    # def save_imgs(self, imgs_view_1: torch.Tensor, imgs_view_2: torch.Tensor, title: str = "TB_saved_img"):
+    #     with torch.no_grad():
+    #         imgs_view_1, imgs_view_2 = imgs_view_1.detach(), imgs_view_2.detach()
+    #         imgs_view = imgs_view_1
+    #         imgs_view.extend(imgs_view_2)
+    #         imgs_view = torchvision.utils.make_grid(imgs_view, nrow=int(len(imgs_view)/2), normalize=True, pad_value=0.9).cpu()
+    #         self.loggers[0].experiment.add_image(
+    #             title, imgs_view, self.trainer.current_epoch
+    #         )

@@ -1,0 +1,93 @@
+defaults:
+- _self_
+- dataset: CBTN_tumor_classification_ASTR_EP_MED # Find a way to have two different datasets, one for the SimCLR training and one for the classification training
+
+working_dir: ${hydra:runtime.cwd}
+
+# these are the settings for the SimCLR dataloader, model and training
+SimCLR:
+  dataloader_settings:
+    batch_size: 32
+    nbr_workers: 15
+    class_stratification: True
+    test_size: 0.2
+    input_size: [224, 224]
+    randomize_subject_labels: False
+    randomize_slice_labels : False
+    select_slices_in_range : null
+    use_one_slice_per_subject_within_epoch: True
+    img_mean: # there are just to save the standardization values
+    img_std: # there are just to save the standardization values
+
+  augmentation_settings:
+    rotation: 45
+    brigntess_rage: 0.5
+    contrast_rage: 0.5
+    saturation: 0.5
+    hue: 0.1
+    use_trivialAugWide: True
+
+  model_settings:
+    model_version: ResNet50 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
+    pre_trained: True
+    freeze_weights: True
+    percentage_freeze_weights: 0.5
+
+  training_settings:
+    epochs: 500
+    patience: 500
+    learning_rate: 0.00001
+    random_state: 20091229
+    nbr_repetitions: 1 # repetitions of cross validation
+    nbr_inner_cv_folds: 1 # number of cross validations in each repetition
+
+# these are the settings for the classifier dataloader, model and training
+classifier:
+  dataloader_settings : 
+    batch_size: 32
+    augmentation: True
+    nbr_workers: 15
+    class_stratification: True
+    test_size: 0.2
+    input_size: [224, 224]
+    randomize_subject_labels: False
+    randomize_slice_labels : False
+    select_slices_in_range : null
+    img_mean: # there are just to save the standardization values
+    img_std: # there are just to save the standardization values
+  
+  augmentation_settings:
+    rotation: 45
+    brigntess_rage: 0.5
+    contrast_rage: 0.5
+    saturation: 0.5
+    hue: 0.1
+    use_trivialAugWide: True
+  
+  model_settings:
+    simCLR_ckpt_path:
+    nbr_mlp: []
+
+  training_settings:
+    epochs: 150
+    patience: 150
+    learning_rate: 0.00001
+    optimizer : adam # adamw, sgd, adam
+    scheduler : exponential # linear_decay, cyclical, reduce_on_plateau, static
+    use_look_ahead_wrapper : False
+    use_class_weights: True
+    random_state: 20091229
+    nbr_repetitions: 1 # repetitions of cross validation
+    nbr_inner_cv_folds: 3 # number of cross validations in each repetition
+    run_testing: False # set to true only when model hiperparameters are tuned to get the final evaluation
+
+debugging_settings:
+  dataset_fraction: 1
+
+logging_settings:
+  checkpoint_path: ${hydra:runtime.cwd}/logging
+  SimCLR_start_time: None
+  classifier_start_time: None
+
+resources:
+  gpu_nbr: 3

@@ -259,19 +259,8 @@ def run_training(config: dict) -> None:
         ],
     )
 
-
     # ## get heuristics for this dataset type
-    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = dataset_utilities.get_dataset_heuristics(config)
-    # heuristic_for_file_discovery = "*.png"
-    ### heuristics for CBTN
-    # heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
-    # heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
-    # heuristic_for_rlp_extraction = lambda x: float(
-    #     os.path.basename(x).split("___")[5].split("_")[-1]
-    # )
-    # # ### heuristics for TCGA
-    # heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
-    # heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]
+    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = dataset_utilities.get_dataset_heuristics(config['dataset']['name'])
 
     # %% RUN REPETITIONS
     for repetition_nbr in range(config["training_settings"]["nbr_repetitions"]):
@@ -330,15 +319,25 @@ def run_training(config: dict) -> None:
                     "target"
                 ]
             )
-            # print('#######################\nNOTE! Training and validationg on the same set!!!!\n#######################')
+
+            # build batch sampler 
+            training_batch_sampler = None
+            if 'use_one_slice_per_subject_within_epoch' in config['dataloader_settings'].keys():
+                if config['dataloader_settings']['use_one_slice_per_subject_within_epoch']:
+                    # build batch sampler
+                    training_batch_sampler = dataset_utilities.OneSlicePerPatientBatchSampler(
+                        df_dataset = dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "training"].reset_index(),
+                        nbr_batches_per_epoch = int(len(files_for_training) / config["dataloader_settings"]["batch_size"]),
+                        nbr_samples_per_batch = config["dataloader_settings"]["batch_size"],
+                    )
+                    logger.info(f'Using custom batch sampler (one slice per subject in each epoch.)')
+
             training_dataloader = dataset_utilities.CustomDataset(
                 train_sample_paths=files_for_training,
                 validation_sample_paths=files_for_validation,
-                # validation_sample_paths=files_for_training,
                 test_sample_paths=files_for_testing,
                 training_targets=training_targets,
                 validation_targets=validation_targets,
-                # validation_targets=training_targets,
                 test_targets=test_targets,
                 batch_size=config["dataloader_settings"]["batch_size"],
                 num_workers=config["dataloader_settings"]["nbr_workers"],
@@ -346,8 +345,9 @@ def run_training(config: dict) -> None:
                 transforms=train_trnsf
                 if config["dataloader_settings"]["augmentation"]
                 else preprocess,
-                # heuristic_for_class_extraction=heuristic_for_class_extraction,
+                training_batch_sampler = training_batch_sampler
             )
+
             # get class weights
             if config["training_settings"]["use_class_weights"]:
                 CLASS_WEIGHTS, CLASS_ORDER = training_dataloader.get_class_weights()
@@ -387,6 +387,7 @@ def run_training(config: dict) -> None:
                 index=False,
             )
 
+            # build the model based on specifications
             model = model_bucket_CBTN_v1.LitModelWrapper(
                 version=MODEL.lower(),
                 nbr_classes=len(pd.unique(dataset_split_df['target'])),
@@ -402,12 +403,14 @@ def run_training(config: dict) -> None:
                 image_mean=img_mean,
                 image_std=img_std,
                 mpl_nodes=list(config["model_settings"]["mlp_nodes"]),
+                use_SimCLR_pretrained_model=config['model_settings']['use_SimCLR_model'] if 'use_SimCLR_model' in config['model_settings'].keys() else False,
+                SimCLR_model_path=config['model_settings']['SimCLR_model_setitngs']['model_path'] if 'SimCLR_model_setitngs' in config['model_settings'].keys() else None,
             ).to(device)
 
             # save model architecture to file
             old_stdout = sys.stdout
             try:
-                if config["model_settings"]['model_version'].lower() != 'vit':
+                if 'vit' not in config["model_settings"]['model_version'].lower():
                     logger.info("Saving model architecture to file...")
                     MODEL_SUMMARY_LOG_FILE = open(
                         os.path.join(save_path, "model_architecture.log"), "w"
@@ -421,11 +424,12 @@ def run_training(config: dict) -> None:
                             INPUT_SIZE[1],
                         ),
                     )
-                    print(model)
                     MODEL_SUMMARY_LOG_FILE.close()
                     logger.info("Done!")
             except:
-                print("Failed to save model summary to file.")
+                print("Failed to save model summary to file using torchsummary. Just printing.")
+                print(model)
+                logger.info("Done!")
             sys.stdout = old_stdout
 
             trainer = pl.Trainer(

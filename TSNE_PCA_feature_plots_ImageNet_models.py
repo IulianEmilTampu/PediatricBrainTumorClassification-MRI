@@ -10,6 +10,7 @@ import numpy as np
 import cv2
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
+from torchvision import models
 import importlib
 
 import dataset_utilities
@@ -22,48 +23,34 @@ from sklearn.decomposition import PCA
 import seaborn as sns
 
 import glob
+import model_bucket_CBTN_v1
+
 
 pl.seed_everything(42)
 # %% LOOP ON MANY FOLDS
-model_save_path = '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231125'
-# get all the possible .pt files
-models_to_evaluate = []
-for model_run in glob.glob(os.path.join(model_save_path, '*','')):
-    # for all the repetiitons
-    for repetition in glob.glob(os.path.join(model_run, 'REPETITION*','')):
-        # for the folds
-        for fold in glob.glob(os.path.join(repetition, 'TB_fold_*','')):
-            # check if these is a last.pt file
-            for file in glob.glob(os.path.join(fold, 'last.pt')):
-                models_to_evaluate.append(file)
 
-print(f'Found {len(models_to_evaluate)} to work on.')
-set_to_plot = 'validation'
+# pretrained_models_to_evaluate = ['ResNet50', 'ResNet18', 'ResNet9', 'ViT_16_b', 'ViT_32_b']
+pretrained_models_to_evaluate = ['ResNet18']
+set_to_plot = 'training'
 
-# models_to_evaluate = ['/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231125/ResNet9_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t002831/REPETITION_1/TB_fold_1/last.pt']
-
-for idy, model_path in enumerate(models_to_evaluate):
-    print(f'Model {idy+1} of {len(models_to_evaluate)}')
+for idy, model_version in enumerate(pretrained_models_to_evaluate):
+    print(f'Model {idy+1} of {len(pretrained_models_to_evaluate)}')
     # %% DEFINE PATHS AND SETTINGS
     MODEL_INFO = {
-        'pretraining_type': "classification", # or SimCLR
-        'path': model_path,
+        'pretraining_type': "classification", 
+        'path': None,
     }
 
     DATASET_INFO = {
-        'dataset_split_path' : os.path.join(pathlib.Path(os.path.dirname(os.path.dirname(MODEL_INFO['path']))), 'data_split_information.csv'),
+        'dataset_split_path' : '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124/ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t100754/REPETITION_1/data_split_information.csv',
         'set': set_to_plot,
         'nbr_samples_to_plot': None
     }
 
-    SAVE_PATH = pathlib.Path(os.path.dirname(MODEL_INFO['path']))
+    SAVE_PATH = os.path.join(os.getcwd(), 'visuals')
 
     # build prefix sof saving
-    model_version = str(pathlib.Path(os.path.basename(os.path.dirname(os.path.dirname(os.path.dirname(MODEL_INFO['path'])))))).split('_')[0]
-    session_time = str(pathlib.Path(os.path.dirname(os.path.dirname(os.path.dirname(MODEL_INFO['path']))))).split('_')[-1]
-    repetition = str(pathlib.Path(os.path.basename(os.path.dirname(os.path.dirname(MODEL_INFO['path'])))))
-    fold = str(pathlib.Path(os.path.basename(os.path.dirname(MODEL_INFO['path']))))
-    SAVE_PREFIX = f'{model_version}_{MODEL_INFO["pretraining_type"]}_{repetition}_{fold}_{set_to_plot}_{session_time}'
+    SAVE_PREFIX = f'{model_version}_{set_to_plot}_set_ImageNet_pretraining_feature_plot_2'
     print(SAVE_PREFIX)
     # % BUILD DATASET
     # load dataset split file
@@ -96,14 +83,19 @@ for idy, model_path in enumerate(models_to_evaluate):
     )
 
     importlib.reload(dataset_utilities)
+    img_mean = np.array([0.4451, 0.4262, 0.3959])
+    img_std = np.array([0.2411, 0.2403, 0.2466])
+
+    img_mean = np.array([0.5]*3)
+    img_std = np.array([0.5]*3)
 
     preprocess = T.Compose(
             [
                 T.Resize(size=(224, 224), antialias=True),
                 T.ToTensor(),
                 T.Normalize(
-                    mean=[0.5, 0.5, 0.5],
-                    std=[0.5, 0.5, 0.5],
+                    mean=img_mean,
+                    std=img_std,
                 ),
             ],
         )
@@ -121,20 +113,27 @@ for idy, model_path in enumerate(models_to_evaluate):
     # %% LOAD MODEL
     device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
-    if MODEL_INFO['pretraining_type'] == 'classification':
-        model = torch.load(MODEL_INFO['path'])
-        model = deepcopy(model.model.model)
-    elif MODEL_INFO['pretraining_type'] == 'SimCLR':
-        model = model_bucket_CBTN_v1.SimCLRModelWrapper.load_from_checkpoint(
-            MODEL_INFO['path'],
-        )
-        model = deepcopy(model.convnet)
-    
+    if model_version.lower() == "resnet50":
+        model = models.resnet50(
+            weights=models.ResNet50_Weights.DEFAULT)
+    elif model_version.lower() == "resnet18":
+        model = models.resnet18(
+            weights=models.ResNet18_Weights.DEFAULT)
+    elif model_version.lower() == "resnet9":
+        model = model_bucket_CBTN_v1.ResNet9()
+        # laod model from .pth
+        model.load_state_dict(torch.load(os.path.join(os.getcwd(), "pretrained_models/resnet9.pth")))
+    elif model_version.lower() == 'vit_16_b':
+        model = models.vit_b_16(weights='DEFAULT')
+    elif model_version.lower() == 'vit_32_b':
+        model = models.vit_b_32(weights='DEFAULT')
+
 
     # %% remove classification head
     if 'vit' not in model_version.lower():
         if model_version.lower() == 'resnet9':
             model.classifier[2] = torch.nn.Identity()
+            model.classifier[3] = torch.nn.Identity()
         else:
             model.fc = torch.nn.Identity() 
     elif 'vit' in model_version.lower():

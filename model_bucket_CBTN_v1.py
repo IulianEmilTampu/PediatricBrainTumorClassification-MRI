@@ -21,6 +21,10 @@ from torchvision import models
 
 from torchsummary import summary
 import monai
+import evaluation_utilities
+
+
+from scipy.special import softmax
 
 
 # %% some utilities
@@ -137,7 +141,9 @@ class ResNets(torch.nn.Module):
             if pretrained:
                 # laod model from .pth
                 self.model.load_state_dict(
-                    torch.load(os.path.join(os.getcwd(), "pretrained_models/resnet9.pth"))
+                    torch.load(
+                        os.path.join(os.getcwd(), "pretrained_models/resnet9.pth")
+                    )
                 )
 
         # ## freeze parts of the model as specified
@@ -590,32 +596,30 @@ class RadImageNet(torch.nn.Module):
         return x
 
 
-
 # %% ViT
 class ViT_nomai(torch.nn.Module):
     def __init__(
         self,
         nbr_classes: int,
-        spatial_dims:int=2,
-        in_channels:int = 3,
-        img_size:Union[list, tuple] = (224,224),
-        proj_type:str='conv',
-        pos_embed_type:str='sincos',
+        spatial_dims: int = 2,
+        in_channels: int = 3,
+        img_size: Union[list, tuple] = (224, 224),
+        proj_type: str = "conv",
+        pos_embed_type: str = "sincos",
         patch_size: int = 16,
-
     ) -> None:
         super().__init__()
-        self.model =  monai.networks.nets.ViT(
+        self.model = monai.networks.nets.ViT(
             spatial_dims=spatial_dims,
-            num_classes=nbr_classes, 
-            patch_size=patch_size, 
-            in_channels=in_channels, 
-            img_size=img_size, 
-            proj_type=proj_type, 
-            pos_embed_type=pos_embed_type, 
-            classification=True, 
-            )
-        
+            num_classes=nbr_classes,
+            patch_size=patch_size,
+            in_channels=in_channels,
+            img_size=img_size,
+            proj_type=proj_type,
+            pos_embed_type=pos_embed_type,
+            classification=True,
+        )
+
     def forward(self, x):
         return self.model(x)[0]
 
@@ -627,57 +631,70 @@ class ViTs(torch.nn.Module):
         version: str = "vit_b_16",
         pretrained: bool = True,
         freeze_percentage: float = 1.0,
-
     ) -> None:
         super().__init__()
 
         # load the right ViT version
         if version == "vit_b_16":
-            self.model = models.vit_b_16(
-                weights='DEFAULT' if pretrained else None
-            )
+            self.model = models.vit_b_16(weights="DEFAULT" if pretrained else None)
         elif version == "vit_b_32":
-            self.model = models.vit_b_32(
-                weights='DEFAULT' if pretrained else None
-            )
+            self.model = models.vit_b_32(weights="DEFAULT" if pretrained else None)
         else:
-            raise ValueError(f'The given ViT version is not among the one supported. Add the version here if needed. Given {version}')
+            raise ValueError(
+                f"The given ViT version is not among the one supported. Add the version here if needed. Given {version}"
+            )
 
         if pretrained:
             # get the number of encoder layers to freeze
-            nbr_enc_layer_to_freeze = int(len(self.model.encoder.layers) * freeze_percentage)
-            # freeze model 
+            nbr_enc_layer_to_freeze = int(
+                len(self.model.encoder.layers) * freeze_percentage
+            )
+            # freeze model
             for nbr_enc_layer in range(nbr_enc_layer_to_freeze):
                 for param in self.model.encoder.layers[nbr_enc_layer].parameters():
-                        param.requires_grad = False
+                    param.requires_grad = False
             # print status
             print(
                 f"({freeze_percentage}) (Automatic print): Freezing {nbr_enc_layer_to_freeze} encoding blocks out of {len(self.model.encoder.layers)}"
             )
-        
+
         # adapt the classification head to the nunber of classification tasks
         self.model.heads[0] = torch.nn.Linear(in_features=768, out_features=nbr_classes)
-        
+
     def forward(self, x):
         return self.model(x)
 
 
+# %% BUILD CLASSIFIER FROM SimCLR model
 
-# %% BUILD CLASSIFIER FROM SimCLR model 
 
 class ClassifierFromSimCLR(torch.nn.Module):
-    def __init__(self, SimCLR_model_path, nbr_classes, freeze_percentage:float=1.0, mpl_nodes:Union[list, tuple] = (1024), dropout_rate:Union[list, tuple, float]=0.2):
-        super(ClassifierFromSimCLR, self).__init__()
-        self.save_hyperparameters()
+    def __init__(
+        self,
+        SimCLR_model_path,
+        nbr_classes,
+        freeze_percentage: float = 1.0,
+        mpl_nodes: Union[list, tuple] = (1024),
+        dropout_rate: Union[list, tuple, float] = 0.2,
+    ):
+        super().__init__()
+
+        self.SimCLR_model_path = SimCLR_model_path
+        self.nbr_classes = nbr_classes
+        self.freeze_percentage = freeze_percentage
+        self.mpl_nodes = mpl_nodes
+        self.dropout_rate = dropout_rate
 
         # laod model
         if not os.path.isfile(self.SimCLR_model_path):
-            raise ValueError(f'The given model path for the SimCLR model is not available. Please check. Given {self.SimCLR_model_path}')
-        
+            raise ValueError(
+                f"The given model path for the SimCLR model is not available. Please check. Given {self.SimCLR_model_path}"
+            )
+
         self.model = torch.load(self.SimCLR_model_path)
         self.model = self.model.convnet
 
-        # build classifier head 
+        # build classifier head
         if isinstance(self.dropout_rate, float):
             self.dropout_rate = [self.dropout_rate for i in range(len(self.mpl_nodes))]
         else:
@@ -686,8 +703,13 @@ class ClassifierFromSimCLR(torch.nn.Module):
             ), f"Single modality classification model build: the number of dropout rates and the number of mpl layers does not match. Given {len(dropout_rate)} and {len(nodes_in_mpl)}"
             self.dropout_rate = self.dropout_rate
 
-        self.model.fc = make_classification_mpl(in_features=self.model.fc[0][0].in_features, mpl_nodes=self.mpl_nodes, dropout_rate=self.dropout_rate, nbr_classes=self.nbr_classes)
-    
+        self.model.fc = make_classification_mpl(
+            in_features=self.model.fc[0][0].in_features,
+            mpl_nodes=self.mpl_nodes,
+            dropout_rate=self.dropout_rate,
+            nbr_classes=self.nbr_classes,
+        )
+
     def forward(self, x):
         return self.model(x)
 
@@ -710,8 +732,8 @@ class LitModelWrapper(pl.LightningModule):
         use_look_ahead_wrapper: bool = False,
         use_regularization: bool = False,
         mpl_nodes: Union[list, tuple] = (1024),
-        use_SimCLR_pretrained_model:bool = False,
-        SimCLR_model_path: str=None,
+        use_SimCLR_pretrained_model: bool = False,
+        SimCLR_model_path: str = None,
     ):
         super(LitModelWrapper, self).__init__()
 
@@ -729,14 +751,16 @@ class LitModelWrapper(pl.LightningModule):
         if use_SimCLR_pretrained_model:
             # build model based on SimCLR pretrained model
             self.model = ClassifierFromSimCLR(
-                SimCLR_model_path=SimCLR_model_path, 
+                SimCLR_model_path=SimCLR_model_path,
                 nbr_classes=self.nbr_classes,
-                freeze_percentage=freeze_percentage, 
-                mpl_nodes=self.mpl_nodes, 
+                freeze_percentage=freeze_percentage,
+                mpl_nodes=self.mpl_nodes,
                 dropout_rate=0.2,
             )
-        else:        
-            if any([version == "resnet50", version == "resnet18", version == "resnet9"]):
+        else:
+            if any(
+                [version == "resnet50", version == "resnet18", version == "resnet9"]
+            ):
                 self.model = ResNets(
                     nbr_classes=nbr_classes,
                     version=version,
@@ -746,7 +770,9 @@ class LitModelWrapper(pl.LightningModule):
                 )
             elif version == "2dsdm4":
                 self.model = CustomModel(
-                    nbr_classes=nbr_classes, conv_dropout_rate=0.4, dense_dropout_rate=0.2
+                    nbr_classes=nbr_classes,
+                    conv_dropout_rate=0.4,
+                    dense_dropout_rate=0.2,
                 )
             elif version == "radresnet":
                 self.model = RadImageNet(
@@ -760,10 +786,12 @@ class LitModelWrapper(pl.LightningModule):
                     mpl_nodes=mpl_nodes,
                 )
             elif any([version == "vit_b_16", version == "vit_b_32"]):
-                self.model = ViTs(nbr_classes=nbr_classes,
+                self.model = ViTs(
+                    nbr_classes=nbr_classes,
                     version=version,
                     pretrained=pretrained,
-                    freeze_percentage=freeze_percentage)
+                    freeze_percentage=freeze_percentage,
+                )
             else:
                 raise ValueError(
                     f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
@@ -914,7 +942,10 @@ class LitModelWrapper(pl.LightningModule):
         loss = self.loss_fn(preds, y)
 
         # compute metrics
-        self.train_metrics.update(torch.argmax(preds, dim=1), torch.argmax(y, dim=1))
+        self.train_metrics.update(
+            torch.argmax(torch.nn.functional.softmax(preds, dim=1), dim=1),
+            torch.argmax(y, dim=1),
+        )
         self.log(
             "ptl/train_classification_loss", loss.item(), on_epoch=True, sync_dist=True
         )
@@ -938,7 +969,10 @@ class LitModelWrapper(pl.LightningModule):
         loss = self.loss_fn(preds, y)
 
         # compute metrics
-        self.valid_metrics.update(torch.argmax(preds, dim=1), torch.argmax(y, dim=1))
+        self.valid_metrics.update(
+            torch.argmax(torch.nn.functional.softmax(preds, dim=1), dim=1),
+            torch.argmax(y, dim=1),
+        )
         self.log(
             "ptl/valid_classification_loss", loss.item(), on_epoch=True, sync_dist=True
         )
@@ -956,7 +990,10 @@ class LitModelWrapper(pl.LightningModule):
         loss = self.loss_fn(preds, y)
 
         # compute metrics
-        self.test_metrics.update(torch.argmax(preds, dim=1), y)
+        self.test_metrics.update(
+            torch.argmax(torch.nn.functional.softmax(preds, dim=1), dim=1),
+            torch.argmax(y, dim=1),
+        )
         self.log(
             "ptl/test_classification_loss", loss.item(), on_epoch=True, sync_dist=True
         )
@@ -971,21 +1008,27 @@ class LitModelWrapper(pl.LightningModule):
             self.test_step_img.append(x.to("cpu"))
 
     def on_train_epoch_end(self) -> None:
+        # save metrics
+        output = self.train_metrics.compute()
+        self.log_dict(output)
+
+        # fix metrics for confusion matric title
+        output = [f'{k}: {v.to("cpu").numpy():0.2f}\n' for k, v in output.items()]
+
+        # save confusion matrix
         self._save_confusion_matrix(
             self.training_step_ys,
             self.training_step_y_hats,
-            title="Confusion matrix training",
+            fig_name="Confusion matrix training",
+            metrics=output,
         )
 
+        # save images
         _imgs = torch.cat(self.training_step_img)
         self.save_imgs(
             _imgs,
             title="Example_train_batch",
         )
-
-        # save metrics
-        output = self.train_metrics.compute()
-        self.log_dict(output)
 
         # reset
         self.training_step_img = []
@@ -993,10 +1036,19 @@ class LitModelWrapper(pl.LightningModule):
         self.training_step_ys, self.training_step_y_hats = [], []
 
     def on_validation_epoch_end(self) -> None:
+        # save metrics
+        output = self.valid_metrics.compute()
+        self.log_dict(output)
+
+        # fix metrics for confusion matric title
+        output = [f'{k}: {v.to("cpu").numpy():0.2f}\n' for k, v in output.items()]
+
+        # save confusion matrix
         self._save_confusion_matrix(
             self.validation_step_ys,
             self.validation_step_y_hats,
-            title="Confusion matrix validation",
+            fig_name="Confusion matrix validation",
+            metrics=output,
         )
 
         # save image batch
@@ -1006,21 +1058,25 @@ class LitModelWrapper(pl.LightningModule):
             title="Example_validation_batch",
         )
 
-        # save metrics
-        output = self.valid_metrics.compute()
-        self.log_dict(output)
-
         # reset
         self.validation_step_img = []
         self.valid_metrics.reset()
         self.validation_step_ys, self.validation_step_y_hats = [], []
 
     def on_test_epoch_end(self):
+        # save metrics
+        output = self.test_metrics.compute()
+        self.log_dict(output)
+
+        # fix metrics for confusion matric title
+        output = [f'{k}: {v.to("cpu").numpy():0.2f}\n' for k, v in output.items()]
+
         # save confusion matrix
         self._save_confusion_matrix(
             self.test_step_ys,
             self.test_step_y_hats,
-            title="Confusion matrix test",
+            fig_name="Confusion matrix test",
+            metrics=output,
         )
 
         # save test images
@@ -1030,11 +1086,9 @@ class LitModelWrapper(pl.LightningModule):
             title="Example_test_batch",
         )
 
-        # save metrics
-        output = self.test_metrics.compute()
-        self.log_dict(output)
-
-    def _save_confusion_matrix(self, y, y_hat, title="Confusion matri"):
+    def _save_confusion_matrix(
+        self, y, y_hat, fig_name="Confusion_matrix", metrics=None
+    ):
         # save confusion matrix
         y_hat = torch.cat(y_hat).cpu()
         y = torch.cat(y).cpu()
@@ -1050,12 +1104,22 @@ class LitModelWrapper(pl.LightningModule):
         )
 
         df_cm = pd.DataFrame(confusion_matrix_computed)
-        plt.figure(figsize=(10, 7))
-        fig_ = sns.heatmap(
-            df_cm, annot=True, cmap="Blues", annot_kws={"size": 20}
-        ).get_figure()
-        self.loggers[0].experiment.add_figure(title, fig_, self.current_epoch)
+        fig_, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 7))
+        sns.heatmap(df_cm, annot=True, cmap="Blues", annot_kws={"size": 20}, ax=ax)
+        ax.set_title(metrics)
+        fig_ = fig_.get_figure()
+        self.loggers[0].experiment.add_figure(fig_name, fig_, self.current_epoch)
         plt.close(fig_)
+
+        # # save confusion matrix using evaluation utilities (this is for debugging)
+        # evaluation_utilities.plotConfusionMatrix(
+        #     GT=y.detach().numpy(),
+        #     PRED=softmax(y_hat.detach().numpy()),
+        #     classes=["ASTR", "EP", "MED"],
+        #     savePath="/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127",
+        #     saveName=f"{fig_name}_{self.trainer.global_step}",
+        #     draw=False,
+        # )
 
     def save_imgs(self, imgs: torch.Tensor, title: str = "TB_saved_img"):
         with torch.no_grad():
@@ -1067,16 +1131,28 @@ class LitModelWrapper(pl.LightningModule):
                 title, imgs, self.trainer.current_epoch
             )
 
+
 # %% LiT WRAPPER FOR SimCLR training
 
+
 class SimCLRModelWrapper(pl.LightningModule):
-    def __init__(self, version:str = "resnet50", pretrained:bool=False,freeze_percentage: float = 1.0, hidden_dim:int=128, lr:float=0.001, temperature:float=0.07, weight_decay:float=1e-4, max_epochs=500):
+    def __init__(
+        self,
+        version: str = "resnet50",
+        pretrained: bool = False,
+        freeze_percentage: float = 1.0,
+        hidden_dim: int = 128,
+        lr: float = 0.001,
+        temperature: float = 0.07,
+        weight_decay: float = 1e-4,
+        max_epochs=500,
+    ):
         super().__init__()
         self.save_hyperparameters()
         assert (
             self.hparams.temperature > 0.0
         ), "The temperature must be a positive float!"
-        
+
         # Base model f(.)
         # define model based on the version
         if any([version == "resnet50", version == "resnet18", version == "resnet9"]):
@@ -1089,7 +1165,9 @@ class SimCLRModelWrapper(pl.LightningModule):
             ).model
         elif version == "2dsdm4":
             self.convnet = CustomModel(
-                nbr_classes=4 * hidden_dim, conv_dropout_rate=0.4, dense_dropout_rate=0.2
+                nbr_classes=4 * hidden_dim,
+                conv_dropout_rate=0.4,
+                dense_dropout_rate=0.2,
             )
         elif version == "radresnet":
             self.convnet = RadImageNet(
@@ -1103,15 +1181,17 @@ class SimCLRModelWrapper(pl.LightningModule):
                 mpl_nodes=mpl_nodes,
             ).model
         elif any([version == "vit_b_16", version == "vit_b_32"]):
-            self.convnet = ViTs(nbr_classes=4 * hidden_dim,
+            self.convnet = ViTs(
+                nbr_classes=4 * hidden_dim,
                 version=version,
                 pretrained=pretrained,
-                freeze_percentage=freeze_percentage)
+                freeze_percentage=freeze_percentage,
+            )
         else:
             raise ValueError(
                 f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
             )
-        
+
         # The MLP for g(.) consists of Linear->ReLU->Linear
         self.convnet.fc = nn.Sequential(
             self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
@@ -1184,7 +1264,7 @@ class SimCLRModelWrapper(pl.LightningModule):
         # # save one batch of images
         # if len(self.validation_step_img) == 0:
         #     self.validation_step_img.append(x.to("cpu"))
-    
+
     # TODO fix image plotting during training
     # def on_train_epoch_end(self) -> None:
     #     _imgs = torch.cat(self.training_step_img)

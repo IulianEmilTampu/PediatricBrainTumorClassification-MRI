@@ -29,6 +29,7 @@ from sklearn.metrics import matthews_corrcoef
 from scipy.special import softmax
 from scipy.stats import entropy
 import importlib
+from copy import deepcopy
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -42,9 +43,10 @@ import pytorch_lightning as pl
 # local imports
 import dataset_utilities
 
-# import utilities
+pl.seed_everything(42)
 
 
+# %%
 def check_given_folders(config):
     # -------------------------------------
     # Check that the given folder exist
@@ -62,7 +64,7 @@ def check_given_folders(config):
         ],
     ):
         if not os.path.exists(folder):
-            raise ValueError(f"{fd.capitalize} not found. Given {folder}.")
+            raise ValueError(f"{fd} not found. Given {folder}.")
 
 
 def set_up(config: dict):
@@ -129,7 +131,6 @@ def run_evaluation(config: dict):
     # here wecan save all the information in a dataframe so that future manipulations are easy to perform.
     # The dataframe stores the subject_ID, the class, the file name and the performance for each model in columns MF_1, MF_2, etc.
     # What is saved are the logits (not softmax) scores as outputed from the model for each of the classes.
-
     for cv_f, M in enumerate(MODEL):
         print("\n")
         for mv in ["last", "best"]:
@@ -152,18 +153,18 @@ config = {
     "working_folder": os.getcwd(),
     "save_path": None,
     "dataloader_settings": {
-        "path_to_data_split_csv_file": "/flush/iulta54/P5-PedMRI_CBTN_v1/trained_model_archive/TESTs_20231106/ResNet18_pretrained_True_frozen_True_0.4_LR_0.0001_BATCH_64_AUGMENTATION_True_OPTIM_sgd_SCHEDULER_exponential_MLPNODES_512_t0928/REPETITION_1/data_split_information.csv",
-        "set_to_evaluate": "test",  # this can be training, validation, testing
+        "path_to_data_split_csv_file": "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127/ResNet50_pretrained_True_frozen_True_1.0_LR_1e-05_BATCH_32_AUGMENTATION_False_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t082159/REPETITION_1/data_split_information.csv",
+        "set_to_evaluate": "training",  # this can be training, validation, testing
         "preprocessing_settings": {
-            "input_size": [240, 240],
-            "img_mean": [0.4451, 0.4262, 0.3959],
-            "img_std": [0.2411, 0.2403, 0.2466],
+            "input_size": [224, 224],
+            "img_mean": [0.5] * 3,
+            "img_std": [0.5] * 3,
         },
     },
     "model_settings": {
-        "path_to_cross_validation_folder": "/flush/iulta54/P5-PedMRI_CBTN_v1/trained_model_archive/TESTs_20231106/ResNet18_pretrained_True_frozen_True_0.4_LR_0.0001_BATCH_64_AUGMENTATION_True_OPTIM_sgd_SCHEDULER_exponential_MLPNODES_512_t0928/REPETITION_1",
+        "path_to_cross_validation_folder": "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127/ResNet50_pretrained_True_frozen_True_1.0_LR_1e-05_BATCH_32_AUGMENTATION_False_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t082159/REPETITION_1",
     },
-    "resources": {"gpu_nbr": 3, "nbr_workers": 15},
+    "resources": {"gpu_nbr": 0, "nbr_workers": 15},
 }
 
 check_given_folders(config)
@@ -174,7 +175,10 @@ set_up(config)
 dataset_split = pd.read_csv(
     config["dataloader_settings"]["path_to_data_split_csv_file"]
 )
-dataset_split = dataset_split.drop(columns=["level_0", "index"])
+try:
+    dataset_split = dataset_split.drop(columns=["level_0", "index"])
+except:
+    print()
 
 # get mapping of the classes to one hot encoding
 unique_targe_classes = dict.fromkeys(pd.unique(dataset_split["target"]))
@@ -233,12 +237,15 @@ for idx, m in enumerate(MODELS):
 # The dataframe stores the subject_ID, the class, the file name and the performance for each model in columns MF_1, MF_2, etc.
 # What is saved are the logits (not softmax) scores as outputed from the model for each of the classes.
 summary_evaluation = []
+device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 for cv_f, M in enumerate(MODELS):
     print("\n")
     for mv in ["last", "best"]:
         if M[mv]:
             # load model
             model = torch.load(M[mv])
+            model = deepcopy(model.model.model)
+            model.to(device)
             model.eval()
 
             # get files for this model evaluation. This depends on the fold and the set_to_evaluate specified.
@@ -265,8 +272,8 @@ for cv_f, M in enumerate(MODELS):
                     labels=labels,
                     return_file_path=False,
                 ),
-                batch_size=64,
-                num_workers=config["resources"]["nbr_workers"],
+                batch_size=32,
+                num_workers=15,
                 shuffle=False,
             )
             # get predictions on these filed
@@ -279,7 +286,7 @@ for cv_f, M in enumerate(MODELS):
                         end="",
                     )
                     x, y = next(dataset)
-                    pred_list.extend(model(x).to("cpu").numpy().tolist())
+                    pred_list.extend(model(x.to(device)).to("cpu").numpy().tolist())
 
             # add the predictions to the dataframe
             files_for_inference.insert(
@@ -287,6 +294,7 @@ for cv_f, M in enumerate(MODELS):
             )
             # save dataframe
             summary_evaluation.append(files_for_inference)
+
 # %% WORK ON THE DATAFRAMES
 # stack the dataframes
 concatenated_summary_evaluation = pd.concat(
@@ -309,6 +317,8 @@ def ensamble_predictions(pd_slice_row, nbr_predictive_models):
     predictions = [
         pd_slice_row[f"pred_fold_{i+1}"] for i in range(nbr_predictive_models)
     ]
+    # remove None
+    predictions = [x for x in predictions if x is not None]
     # ensemble predictions
     ensemble = np.array(predictions).mean(axis=0).tolist()
     return ensemble
@@ -320,6 +330,8 @@ def per_slice_per_class_uncertainty(pd_slice_row, nbr_predictive_models):
     predictions = [
         pd_slice_row[f"pred_fold_{i+1}"] for i in range(nbr_predictive_models)
     ]
+    # remove None
+    predictions = [x for x in predictions if x is not None]
     # apply softmax to get predicted probabilities (NOTE that these are not real probabilities since they are not calibrated)
     predicted_probabilities = softmax(predictions)
     # compute SHannon entropy class wise
@@ -355,6 +367,7 @@ def proces_subject_wise_predictions(
             processed_data.to_frame().apply(pd.Series).values.tolist(),
             index=processed_data.index,
         )
+
     if use_exixting_col_names:
         col_names = [
             f"{prefix}_{col}" for col in grouped_data if col.startswith("pred_fold_")
@@ -362,6 +375,7 @@ def proces_subject_wise_predictions(
     else:
         col_names = [prefix]
     temp.columns = col_names
+
     grouped_data = grouped_data.merge(
         temp, how="left", left_on="subject_IDs", right_index=True
     )
@@ -369,47 +383,52 @@ def proces_subject_wise_predictions(
 
 
 def slice_wise_model_wise_subject_ensemble(x):
-    aus = [
-        np.array(list(x[col])).mean(axis=0).tolist()
-        for col in x
-        if col.startswith("pred_fold_")
-    ]
+    # here One needs to handrle the cases where there are None values (e.g. subject only use in one fold)
+    aus = []
+    for col in x:
+        if col.startswith("pred_fold_"):
+            if x[col][0] != None:
+                aus.append(np.array(list(x[col])).mean(axis=0).tolist())
+            else:
+                aus.append([None])
     return aus
 
 
 def slice_wise_model_wise_subject_entropy(x):
-    aus = [
-        entropy(softmax(np.array(list(x[col])))).tolist()
-        for col in x
-        if col.startswith("pred_fold_")
-    ]
+    # here One needs to handrle the cases where there are None values (e.g. subject only use in one fold)
+    aus = []
+    for col in x:
+        if col.startswith("pred_fold_"):
+            if x[col][0] != None:
+                aus.append(entropy(softmax(np.array(list(x[col])))).tolist())
+            else:
+                aus.append([None])
     return aus
 
 
 def slice_wise_subject_ensemble(x):
-    # get all logits from all folds
+    # here One needs to handrle the cases where there are None values (e.g. subject only use in one fold)
     aus = []
-    aus.append(
-        [
-            np.array(list(x[col])).mean(axis=0).tolist()
-            for col in x
-            if col.startswith("pred_fold_")
-        ]
-    )
+    for col in x:
+        if col.startswith("pred_fold_"):
+            if x[col][0] != None:
+                aus.append(np.array(list(x[col])).mean(axis=0).tolist())
+            else:
+                aus.append([0, 0, 0])
     aus = np.vstack(aus).mean(axis=0).tolist()
     return aus
 
 
 def slice_wise_subject_entropy(x):
-    # get all logits from all folds
+    # here One needs to handrle the cases where there are None values (e.g. subject only use in one fold)
     aus = []
-    aus.append(
-        [
-            np.array(list(x[col])).mean(axis=0).tolist()
-            for col in x
-            if col.startswith("pred_fold_")
-        ]
-    )
+    for col in x:
+        if col.startswith("pred_fold_"):
+            if x[col][0] != None:
+                aus.append(np.array(list(x[col])).mean(axis=0).tolist())
+            else:
+                aus.append([0, 0, 0])
+    # compute entropy
     aus = entropy(softmax(np.vstack(aus))).tolist()
     return aus
 
@@ -441,9 +460,9 @@ collapsed_summary_evaluation = proces_subject_wise_predictions(
 
 
 # %% PLOT SLICE-WISE RESULTS
-import utilities
+import evaluation_utilities
 
-importlib.reload(utilities)
+importlib.reload(evaluation_utilities)
 
 # plot metrics for each fold separately and for the ensemble
 # get the column names to plot
@@ -459,10 +478,17 @@ for col_name in col_names:
     print(f"Working on {col_name}\r", end="")
     # get predictions and ground truth
     Ytest_categorical = np.array(list(collapsed_summary_evaluation["one_hot_encodig"]))
-    Ptest_softmax = softmax(list(collapsed_summary_evaluation[col_name]))
+
+    # remove nones from the predicitions
+    Ptest = list(collapsed_summary_evaluation[col_name])
+    idx_not_none = [i for i, _ in enumerate(Ptest) if Ptest[i] != None]
+    Ptest = np.array([Ptest[i] for i in idx_not_none])
+    Ytest_categorical = np.array([Ytest_categorical[i] for i in idx_not_none])
+
+    Ptest_softmax = softmax(Ptest)
 
     # plot metrics
-    utilities.plotConfusionMatrix(
+    evaluation_utilities.plotConfusionMatrix(
         GT=Ytest_categorical,
         PRED=Ptest_softmax,
         classes=["Not_tumor", "Tumor"]
@@ -477,7 +503,7 @@ for col_name in col_names:
         draw=False,
     )
 
-    utilities.plotROC(
+    evaluation_utilities.plotROC(
         GT=Ytest_categorical,
         PRED=Ptest_softmax,
         classes=["Not_tumor", "Tumor"]
@@ -492,7 +518,7 @@ for col_name in col_names:
         draw=False,
     )
 
-    utilities.plotPR(
+    evaluation_utilities.plotPR(
         GT=Ytest_categorical,
         PRED=Ptest_softmax,
         classes=["Not_tumor", "Tumor"]
@@ -526,13 +552,25 @@ for col_name in col_names:
             ].first()
         )
     )
-    Ptest_softmax = softmax(
-        list(
-            collapsed_summary_evaluation.groupby(collapsed_summary_evaluation.index)[
-                col_name
-            ].first()
-        )
+
+    Ptest = list(
+        collapsed_summary_evaluation.groupby(collapsed_summary_evaluation.index)[
+            col_name
+        ].first()
     )
+
+    idx_not_none = [i for i, _ in enumerate(Ptest) if Ptest[i] != None]
+    Ptest = np.array([Ptest[i] for i in idx_not_none])
+    Ytest_categorical = np.array([Ytest_categorical[i] for i in idx_not_none])
+
+    Ptest_softmax = softmax(Ptest)
+    # Ptest_softmax = softmax(
+    #     list(
+    #         collapsed_summary_evaluation.groupby(collapsed_summary_evaluation.index)[
+    #             col_name
+    #         ].first()
+    #     )
+    # )
 
     # plot metrics
     utilities.plotConfusionMatrix(
@@ -580,7 +618,7 @@ for col_name in col_names:
         draw=False,
     )
 # %%  COMPUTE METRICS AND SAVE IN THE DATAFRAME
-#TODO
+# TODO
 # %% SAVE PANDAS TO FILE
 
 collapsed_summary_evaluation.to_csv(

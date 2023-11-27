@@ -32,18 +32,21 @@ import pytorch_lightning as pl
 
 
 class AddGaussianNoise(object):
-    def __init__(self, mean=0., std=1.):
+    def __init__(self, mean=0.0, std=1.0):
         self.std = std
         self.mean = mean
-        
+
     def __call__(self, tensor):
         return tensor + torch.randn(tensor.size()) * self.std + self.mean
-    
+
     def __repr__(self):
-        return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
+        return self.__class__.__name__ + "(mean={0}, std={1})".format(
+            self.mean, self.std
+        )
+
 
 def get_dataset_heuristics(dataset_name):
-    '''
+    """
     Utility that given the config dictionary returns the heuristics for:
     - file discovery;
     - subject ID extraction;
@@ -51,34 +54,54 @@ def get_dataset_heuristics(dataset_name):
     - rlp extraction.
 
     for the datasets available in ~/conf/dataset
-    '''
-    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = None, None, None, None
+    """
+    (
+        heuristic_for_file_discovery,
+        heuristic_for_subject_ID_extraction,
+        heuristic_for_class_extraction,
+        heuristic_for_rlp_extraction,
+    ) = (None, None, None, None)
 
-    if 'cbtn_tumor_detection' in dataset_name.lower():
-        heuristic_for_file_discovery = "*.png" 
-        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
-        heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[-1].split('.')[0].split('_')[-1]
-        heuristic_for_rlp_extraction = lambda x: float(
-        os.path.basename(x).split("___")[5].split("_")[-1]
-    )
-    elif 'cbtn_tumor_classification' in dataset_name.lower():
+    if "cbtn_tumor_detection" in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
-        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("___")[2]
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split(
+            "___"
+        )[2]
+        heuristic_for_class_extraction = (
+            lambda x: os.path.basename(x).split("___")[-1].split(".")[0].split("_")[-1]
+        )
+        heuristic_for_rlp_extraction = lambda x: float(
+            os.path.basename(x).split("___")[5].split("_")[-1]
+        )
+    elif "cbtn_tumor_classification" in dataset_name.lower():
+        heuristic_for_file_discovery = "*.png"
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split(
+            "___"
+        )[2]
         heuristic_for_class_extraction = lambda x: os.path.basename(x).split("___")[0]
         heuristic_for_rlp_extraction = lambda x: float(
-        os.path.basename(x).split("___")[5].split("_")[-1]
-    )
+            os.path.basename(x).split("___")[5].split("_")[-1]
+        )
     # elif dataset_name.lower() == 'tcga_tumor_detection':
     #     heuristic_for_file_discovery = "*.png"
     #     heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
-    elif 'tcga_tumor_classification' in dataset_name.lower():
+    elif "tcga_tumor_classification" in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
-        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
+        heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[
+            0
+        ]
         heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]
     else:
-        raise ValueError(f'The given dataset name does not macth any of the available dataset. Given {config["dataset"]["name"]}.\nIf needed, add the .yaml file for the dataset in the ~/conf/dataset folder and add here the heuristics needed.')
-    
-    return heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction
+        raise ValueError(
+            f'The given dataset name does not macth any of the available dataset. Given {config["dataset"]["name"]}.\nIf needed, add the .yaml file for the dataset in the ~/conf/dataset folder and add here the heuristics needed.'
+        )
+
+    return (
+        heuristic_for_file_discovery,
+        heuristic_for_subject_ID_extraction,
+        heuristic_for_class_extraction,
+        heuristic_for_rlp_extraction,
+    )
 
 
 def _get_split(
@@ -212,30 +235,34 @@ def _get_split(
 
         return dataset_df
 
-    def merge_targets(dataset_df, merging_specification:dict):
-        '''
+    def merge_targets(dataset_df, merging_specification: dict):
+        """
         Utility that given the megring specification dictionary, aggregates the target of different classes.
         E.g.
         merging_specification = {'c1': [t1,t3], 'c2':[t2]}
         Will assign to the new class c1 the original targets t1 and t2, while c1 to the original t2 target.
 
         The function returns a new dataframe with the target changed and the original targets still saved.
-        '''
+        """
         # check that the requested targets to aggregate are available in the original targets
-        unique_targe_classes = list(pd.unique(dataset_df['target']))
+        unique_targe_classes = list(pd.unique(dataset_df["target"]))
         requested_targets = []
         [requested_targets.extend(v) for v in merging_specification.values()]
         unique_targe_classes.sort()
         requested_targets.sort()
-        if not all([i == j for i,j in zip(unique_targe_classes, requested_targets)]):
-            raise ValueError(f'Get split - merge_targets: the merging specification targets and the original targets do not share the same classes.\nGiven {unique_targe_classes} as unique classes, and {requested_targets} in the merging specification.')
-        
+        if not all([i == j for i, j in zip(unique_targe_classes, requested_targets)]):
+            raise ValueError(
+                f"Get split - merge_targets: the merging specification targets and the original targets do not share the same classes.\nGiven {unique_targe_classes} as unique classes, and {requested_targets} in the merging specification."
+            )
+
         # rename the target column in the dataset_df to original_target
-        dataset_df['original_target'] = dataset_df['target']
+        dataset_df["original_target"] = dataset_df["target"]
         # merge targets
         for new_target_name, merging_list in merging_specification.items():
             # attribute to all the targets in the merging_list the new_target_name
-            dataset_df.loc[dataset_df['original_target'].map(lambda x: x in merging_list), 'target'] = new_target_name
+            dataset_df.loc[
+                dataset_df["original_target"].map(lambda x: x in merging_list), "target"
+            ] = new_target_name
 
         return dataset_df
 
@@ -286,13 +313,15 @@ def _get_split(
             seed=config["training_settings"]["random_state"],
         )
 
-    if 'merge_specification' in config['dataset'].keys():
-        if config['dataset']['merge_specification']:
-            dataset_df = merge_targets(dataset_df, config['dataset']['merge_specification'])
-    
+    if "merge_specification" in config["dataset"].keys():
+        if config["dataset"]["merge_specification"]:
+            dataset_df = merge_targets(
+                dataset_df, config["dataset"]["merge_specification"]
+            )
+
     # reset index before splitting, if not the stratified split breaks.
     dataset_df = dataset_df.reset_index()
-        
+
     # ################## work on splitting
     if config["dataloader_settings"]["class_stratification"]:
         print("Performing stratified data split (on a per subject bases).")
@@ -456,26 +485,38 @@ class OneSlicePerPatientBatchSampler(Sampler):
 
     Arguments:
         df_dataset : pandas dataframe used to select the files for the dataset.
-        nbr_batches_per_epoch (int) : number of batches to run during an epoch. 
+        nbr_batches_per_epoch (int) : number of batches to run during an epoch.
             The batches are generated by randomly picking from a pool of one slice per patient indexes.
             These the pool of indexes does not change during the epoch, but between epochs.
-        nbr_samples_per_batch (int) : the number of samples per batch (batch size). 
+        nbr_samples_per_batch (int) : the number of samples per batch (batch size).
     """
-    def __init__(self, df_dataset, nbr_batches_per_epoch:int, nbr_samples_per_batch:int=32,):
+
+    def __init__(
+        self,
+        df_dataset,
+        nbr_batches_per_epoch: int,
+        nbr_samples_per_batch: int = 32,
+    ):
         self.df_dataset = df_dataset
-        # build lists of indexes for each subject 
+        # build lists of indexes for each subject
         self.per_subject_slice_indexes = []
-        for subject in list(pd.unique(df_dataset['subject_IDs'])):
-            self.per_subject_slice_indexes.append(df_dataset.index[df_dataset['subject_IDs'] == subject].tolist())
+        for subject in list(pd.unique(df_dataset["subject_IDs"])):
+            self.per_subject_slice_indexes.append(
+                df_dataset.index[df_dataset["subject_IDs"] == subject].tolist()
+            )
         self.nbr_samples_per_batch = nbr_samples_per_batch
         self.nbr_batches_per_epoch = nbr_batches_per_epoch
 
     def __iter__(self):
         # NOTE: the output needs to be a generator type
         # sample one slice from each subject.
-        one_slice_per_subject = [random.choice(slices) for slices in self.per_subject_slice_indexes]
-        # create a batch 
-        batch_samples = random.choices(one_slice_per_subject, k=self.nbr_samples_per_batch)
+        one_slice_per_subject = [
+            random.choice(slices) for slices in self.per_subject_slice_indexes
+        ]
+        # create a batch
+        batch_samples = random.choices(
+            one_slice_per_subject, k=self.nbr_samples_per_batch
+        )
         # create batches. The () brackets makes it a generator type
         indexes = (batch_samples for i in range(self.nbr_batches_per_epoch))
         return indexes
@@ -489,27 +530,41 @@ class SimCLRBatchSamplerTwoSubjectSlicesAsView(Sampler):
 
     Arguments:
         df_dataset : pandas dataframe used to select the files for the dataset.
-        nbr_batches_per_epoch (int) : number of batches to run during an epoch. 
+        nbr_batches_per_epoch (int) : number of batches to run during an epoch.
             The batches are generated by randomly picking from a pool of one slice per patient indexes.
             These the pool of indexes does not change during the epoch, but between epochs.
-        nbr_samples_per_batch (int) : the number of samples per batch (batch size). 
+        nbr_samples_per_batch (int) : the number of samples per batch (batch size).
     """
-    def __init__(self, df_dataset, nbr_batches_per_epoch:int, nbr_samples_per_batch:int=32,nbr_views:int=2):
+
+    def __init__(
+        self,
+        df_dataset,
+        nbr_batches_per_epoch: int,
+        nbr_samples_per_batch: int = 32,
+        nbr_views: int = 2,
+    ):
         self.df_dataset = df_dataset
-        # build lists of indexes for each subject 
+        # build lists of indexes for each subject
         self.per_subject_slice_indexes = []
-        for subject in list(pd.unique(df_dataset['subject_IDs'])):
-            self.per_subject_slice_indexes.append(df_dataset.index[df_dataset['subject_IDs'] == subject].tolist())
+        for subject in list(pd.unique(df_dataset["subject_IDs"])):
+            self.per_subject_slice_indexes.append(
+                df_dataset.index[df_dataset["subject_IDs"] == subject].tolist()
+            )
         self.nbr_samples_per_batch = nbr_samples_per_batch
         self.nbr_batches_per_epoch = nbr_batches_per_epoch
-        self.nbr_views=nbr_views
+        self.nbr_views = nbr_views
 
     def __iter__(self):
         # NOTE: the output needs to be a generator type
         # sample one slice from each subject.
-        one_slice_per_subject = [random.choices(slices, k=self.nbr_views) for slices in self.per_subject_slice_indexes]
-        # create a batch 
-        batch_samples = random.choices(one_slice_per_subject, k=self.nbr_samples_per_batch)
+        one_slice_per_subject = [
+            random.choices(slices, k=self.nbr_views)
+            for slices in self.per_subject_slice_indexes
+        ]
+        # create a batch
+        batch_samples = random.choices(
+            one_slice_per_subject, k=self.nbr_samples_per_batch
+        )
         # create batches. The () brackets makes it a generator type
         indexes = (batch_samples for i in range(self.nbr_batches_per_epoch))
         return indexes
@@ -562,8 +617,9 @@ class PNGDatasetFromFolder(Dataset):
                 if self.transform:
                     tensor_image = self.transform(tensor_images)
                 else:
-                    raise ValueError(f'Dataloader SimCLR: views are selected as two slices from the same subject. Under this configuration, a ContrastiveTransformations transform type is required.')
-
+                    raise ValueError(
+                        f"Dataloader SimCLR: views are selected as two slices from the same subject. Under this configuration, a ContrastiveTransformations transform type is required."
+                    )
 
         # compose what needs to be returned
         # if a list of item_indexes is given, just take the first one (makes things easier later to get the label and the age)
@@ -574,13 +630,13 @@ class PNGDatasetFromFolder(Dataset):
 
         if self.labels:
             label = self.labels[item_index]
-        
+
         if self.return_age:
             age = 0
-        
+
         if self.return_file_path:
             item_path = item_path
-        
+
         # this is ugly, but it works when debugging
         if any([self.return_age, self.return_file_path]):
             return tensor_image, label, age, item_path
@@ -624,7 +680,6 @@ class CustomDataset(pl.LightningDataModule):
 
         # sut up to retur targhets of needed
         if self.return_classes:
-
             self.train_per_sample_target_class = training_targets
             self.validation_per_sample_target_class = validation_targets
             if self.return_test_dataloader:
@@ -700,7 +755,7 @@ class CustomDataset(pl.LightningDataModule):
                 self.training_set,
                 self.batch_size,
                 num_workers=self.num_workers,
-                shuffle=True,
+                shuffle=False,
             )
 
     def val_dataloader(self):

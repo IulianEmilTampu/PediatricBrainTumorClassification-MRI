@@ -21,6 +21,7 @@ https://scikit-learn.org/0.15/auto_examples/plot_classifier_comparison.html
 """
 
 import os
+import sys
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch
@@ -30,6 +31,7 @@ import cv2
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 import importlib
+from scipy.special import softmax
 
 import dataset_utilities
 import model_bucket_CBTN_v1
@@ -54,6 +56,8 @@ from sklearn.metrics import accuracy_score, roc_auc_score, matthews_corrcoef
 
 pl.seed_everything(42)
 device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+import evaluation_utilities
 
 
 # %% LOCAL UTILITIES
@@ -248,7 +252,7 @@ def plot_contours(ax, clf, xx, yy, **params):
 
 
 # %% SOME SETTINGS
-PCA_NBR_COMPONENTS = 3
+PCA_NBR_COMPONENTS = 2
 
 names = [
     "Nearest_Neighbors",
@@ -275,7 +279,7 @@ classifiers = [
 
 
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -320,9 +324,11 @@ for idy, model_path in enumerate(models_to_evaluate):
     - model_version
     - repetition
     - nbr_classes
+    - classes
     - dataset_version
     - fold_nbr
     - set
+    - nbr_PCA_components
     """
     summary_performance = []
 
@@ -352,7 +358,7 @@ for idy, model_path in enumerate(models_to_evaluate):
         # % BUILD TRAINING AND VALIDATION DATASETS
         # ######### training set
         training_files_for_inference = dataset_split.loc[
-            dataset_split[f"fold_{1}"] == "training"
+            dataset_split[f"fold_{fold_idx+1}"] == "training"
         ].reset_index()
         # make torch tensor labels
         training_labels = [
@@ -369,7 +375,7 @@ for idy, model_path in enumerate(models_to_evaluate):
 
         # ######### validation set
         validation_files_for_inference = dataset_split.loc[
-            dataset_split[f"fold_{1}"] == "validation"
+            dataset_split[f"fold_{fold_idx+1}"] == "validation"
         ].reset_index()
         # make torch tensor labels
         validation_labels = [
@@ -452,7 +458,7 @@ for idy, model_path in enumerate(models_to_evaluate):
 
         # %% LOAD THIS FOLD"S MODEL
         model_path = os.path.join(fold, "last.pt")
-
+        print(model_path)
         if MODEL_INFO["pretraining_type"] == "classification":
             original_model = torch.load(model_path)
             original_model = deepcopy(original_model.model.model)
@@ -482,17 +488,31 @@ for idy, model_path in enumerate(models_to_evaluate):
 
         # %% OBTAIN ORIGINAL DL CLASSIFIER PREDICTIONS
         original_DL_classifier_performance = {"training": {}, "validation": {}}
+
         for data, data_name in zip(
             (training_dataset, validation_dataset), ("training", "validation")
         ):
             pred, labels = get_original_model_prediction(original_model, data, device)
             original_DL_classifier_performance[data_name][
                 f"original_DL_accuracy"
-            ] = accuracy_score(np.argmax(labels, axis=1), np.argmax(pred, axis=1))
+            ] = accuracy_score(
+                np.argmax(labels, axis=1), np.argmax(softmax(pred), axis=1)
+            )
             original_DL_classifier_performance[data_name][
                 f"original_DL_mcc"
-            ] = matthews_corrcoef(np.argmax(labels, axis=1), np.argmax(pred, axis=1))
+            ] = matthews_corrcoef(
+                np.argmax(labels, axis=1), np.argmax(softmax(pred), axis=1)
+            )
 
+            # save confusion matrix
+            evaluation_utilities.plotConfusionMatrix(
+                GT=labels,
+                PRED=softmax(pred),
+                classes=list(unique_targe_classes.keys()),
+                savePath=SAVE_PATH,
+                saveName=f"Original_model_{data_name}_performance",
+                draw=False,
+            )
         # %% OBTAIN TRAINING AND VALIDATION FEATURES
         training_features, training_labels = get_features(
             feature_extractor,
@@ -507,7 +527,8 @@ for idy, model_path in enumerate(models_to_evaluate):
         )
 
         # %% APPLY PCA ON THE TRAINING SET AND, USING THE SAME TRANSFORMATION, ON THE VALIDATION SET
-        pca = PCA(n_components=PCA_NBR_COMPONENTS)
+        # work on plotting first (always PCA components = 3)
+        pca = PCA(n_components=3)
         pca_training = pca.fit_transform(training_features)
         pca_validation = pca.transform(validation_freatures)
 
@@ -536,9 +557,10 @@ for idy, model_path in enumerate(models_to_evaluate):
             prefix=f"PCA_validation_set_fold_{fold_idx+1}",
         )
 
-        # trim to two features
-        pca_training = pca_training[:, 0:2]
-        pca_validation = pca_validation[:, 0:2]
+        # reperform PCA with the set number of components
+        pca = PCA(n_components=PCA_NBR_COMPONENTS)
+        pca_training = pca.fit_transform(training_features)
+        pca_validation = pca.transform(validation_freatures)
 
         # %% FOR ALL THE CLASSIFIERS FIT, AND GET STATS
         from matplotlib.colors import ListedColormap
@@ -551,39 +573,43 @@ for idy, model_path in enumerate(models_to_evaluate):
             np.argmax(validation_labels, axis=1),
         )
 
-        xx, yy = make_meshgrid(X_train[:, 0], X_train[:, 1], h=0.5)
+        # countour plot only works well if PCA components is == 2
+        if PCA_NBR_COMPONENTS == 2:
+            xx, yy = make_meshgrid(X_train[:, 0], X_train[:, 1], h=0.5)
 
-        # just plot the dataset first
-        cm_decision_boundary = plt.cm.Pastel1
-        cm_data = plt.cm.viridis
+            # just plot the dataset first
+            cm_decision_boundary = plt.cm.Pastel1
+            cm_data = plt.cm.viridis
 
-        fig, axis = plt.subplots(nrows=2, ncols=len(classifiers) + 1, figsize=(25, 5))
-        # fix axes limits
-        for ax in axis.ravel():
-            ax.set_xlim(xx.min(), xx.max())
-            ax.set_ylim(yy.min(), yy.max())
-            ax.set_xticks(())
-            ax.set_yticks(())
+            fig, axis = plt.subplots(
+                nrows=2, ncols=len(classifiers) + 1, figsize=(25, 5)
+            )
+            # fix axes limits
+            for ax in axis.ravel():
+                ax.set_xlim(xx.min(), xx.max())
+                ax.set_ylim(yy.min(), yy.max())
+                ax.set_xticks(())
+                ax.set_yticks(())
 
-        # Plot the training points
-        sns.scatterplot(
-            x=X_train[:, 0],
-            y=X_train[:, 1],
-            hue=y_train,
-            legend=False,
-            ax=axis[0, 0],
-        )
-        axis[0, 0].set_title(f"Training (PCA dim1 vs dim 2)", fontsize=10)
+            # Plot the training points
+            sns.scatterplot(
+                x=X_train[:, 0],
+                y=X_train[:, 1],
+                hue=y_train,
+                legend=False,
+                ax=axis[0, 0],
+            )
+            axis[0, 0].set_title(f"Training (PCA dim1 vs dim 2)", fontsize=10)
 
-        # and validation points
-        sns.scatterplot(
-            x=X_validation[:, 0],
-            y=X_validation[:, 1],
-            hue=y_validation,
-            legend=False,
-            ax=axis[1, 0],
-        )
-        axis[1, 0].set_title(f"Training (PCA dim1 vs dim 2)", fontsize=10)
+            # and validation points
+            sns.scatterplot(
+                x=X_validation[:, 0],
+                y=X_validation[:, 1],
+                hue=y_validation,
+                legend=False,
+                ax=axis[1, 0],
+            )
+            axis[1, 0].set_title(f"Training (PCA dim1 vs dim 2)", fontsize=10)
 
         # iterate over classifiers
         performance = {"training": {}, "validation": {}}
@@ -599,43 +625,44 @@ for idy, model_path in enumerate(models_to_evaluate):
                 )
             ):
                 print(f"Working on {name} classifier ({set_name}).")
-                plot_contours(
-                    axis[idz, idc + 1],
-                    clf,
-                    xx,
-                    yy,
-                    cmap=cm_decision_boundary,
-                    alpha=0.8,
-                )
 
-                # Plot
-                sns.scatterplot(
-                    x=X[:, 0],
-                    y=X[:, 1],
-                    hue=y,
-                    legend=False,
-                    ax=axis[idz, idc + 1],
-                )
+                if PCA_NBR_COMPONENTS == 2:
+                    plot_contours(
+                        axis[idz, idc + 1],
+                        clf,
+                        xx,
+                        yy,
+                        cmap=cm_decision_boundary,
+                        alpha=0.8,
+                    )
+
+                    # Plot
+                    sns.scatterplot(
+                        x=X[:, 0],
+                        y=X[:, 1],
+                        hue=y,
+                        legend=False,
+                        ax=axis[idz, idc + 1],
+                    )
 
                 # save information for this classifier ad this set
                 pred = clf.predict(X)
                 performance[set_name][f"{name}_accuracy"] = accuracy_score(y, pred)
                 performance[set_name][f"{name}_mcc"] = matthews_corrcoef(y, pred)
 
-                # add MCC score
-                # add title
-                axis[idz, idc + 1].set_title(
-                    f"{name} (MCC: {performance[set_name][f'{name}_mcc']:0.2f})",
-                    fontsize=10,
-                )
-
-        # fig.subplots_adjust(left=0.02, right=0.98)
-        fig.savefig(
-            os.path.join(SAVE_PATH, f"Classifiers performance_{fold_idx+1}.pdf"),
-            dpi=100,
-            bbox_inches="tight",
-        )
-        plt.close(fig)
+                if PCA_NBR_COMPONENTS == 2:
+                    # add title
+                    axis[idz, idc + 1].set_title(
+                        f"{name} (MCC: {performance[set_name][f'{name}_mcc']:0.2f})",
+                        fontsize=10,
+                    )
+        if PCA_NBR_COMPONENTS == 2:
+            fig.savefig(
+                os.path.join(SAVE_PATH, f"Classifiers performance_{fold_idx+1}.pdf"),
+                dpi=100,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
 
         # %% SAVE PERFORMANCE SUMMARY FOR THIS FOLD
         for set_name in ["training", "validation"]:
@@ -644,9 +671,11 @@ for idy, model_path in enumerate(models_to_evaluate):
                 f"{model_version}_{session_time}",
                 repetition,
                 len(np.unique(y_train)),
+                "_".join(list(unique_targe_classes.keys())),
                 "full" if X_train.shape[0] > 1500 else "[45,55]",
                 fold_idx + 1,
                 set_name,
+                PCA_NBR_COMPONENTS,
             ]
             # add original DL classification performance
             row.extend(
@@ -663,15 +692,22 @@ for idy, model_path in enumerate(models_to_evaluate):
         "model_version",
         "repetition",
         "nbr_classes",
+        "classes",
         "dataset_version",
         "fold_nbr",
         "set",
+        "nbr_PCA_components",
     ]
     # add the remaining columns
-    columns.extend([k for k in performance["validation"].keys()])
     columns.extend([k for k in original_DL_classifier_performance["validation"].keys()])
+    columns.extend([k for k in performance["validation"].keys()])
 
     df = pd.DataFrame(data=summary_performance, columns=columns)
-    df.to_csv(os.path.join(SAVE_PATH, "summary_performance.csv"), index=False)
+    df.to_csv(
+        os.path.join(
+            SAVE_PATH, f"summary_performance_{PCA_NBR_COMPONENTS}_PCA_components.csv"
+        ),
+        index=False,
+    )
 
 # %%

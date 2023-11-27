@@ -185,6 +185,7 @@ def plot_PCA_embeddings(
     save_figure: str = None,
     save_path: str = None,
     prefix: str = "Embeddings_cluster",
+    nbr_legend_columns: int = 3,
 ):
     # create axis
     fig, axis = plt.subplots(nrows=2, ncols=2, figsize=(10, 10))
@@ -210,8 +211,10 @@ def plot_PCA_embeddings(
 
         # remove legend for all apart from last plot
         if idx == 2:
-            ax.legend(loc="center left", ncol=3, bbox_to_anchor=(1.1, 0.5))
-            plt.setp(ax.get_legend().get_texts(), fontsize="6")
+            ax.legend(
+                loc="center left", ncol=nbr_legend_columns, bbox_to_anchor=(1.1, 0.5)
+            )
+            plt.setp(ax.get_legend().get_texts(), fontsize="5")
 
     # hide last axis
     axis[1, 1].axis("off")
@@ -253,7 +256,6 @@ def plot_contours(ax, clf, xx, yy, **params):
 
 # %% SOME SETTINGS
 PCA_NBR_COMPONENTS = 2
-
 names = [
     "Nearest_Neighbors",
     "Linear_SVM",
@@ -279,7 +281,7 @@ classifiers = [
 
 
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -510,7 +512,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                 PRED=softmax(pred),
                 classes=list(unique_targe_classes.keys()),
                 savePath=SAVE_PATH,
-                saveName=f"Original_model_{data_name}_performance",
+                saveName=f"Original_model_{data_name}_performance_fold_{fold_idx+1}",
                 draw=False,
             )
         # %% OBTAIN TRAINING AND VALIDATION FEATURES
@@ -538,11 +540,12 @@ for idy, model_path in enumerate(models_to_evaluate):
             hue_labels=one_hot_to_class_string(
                 training_labels, target_class_to_one_hot_mapping
             ),
-            style_labels=None,
+            style_labels=list(training_files_for_inference["subject_IDs"]),
             draw=False,
             save_figure=True,
             save_path=SAVE_PATH,
             prefix=f"PCA_training_set_fold_{fold_idx+1}",
+            nbr_legend_columns=4,
         )
 
         plot_PCA_embeddings(
@@ -550,7 +553,7 @@ for idy, model_path in enumerate(models_to_evaluate):
             hue_labels=one_hot_to_class_string(
                 validation_labels, target_class_to_one_hot_mapping
             ),
-            style_labels=None,
+            style_labels=list(validation_files_for_inference["subject_IDs"]),
             draw=False,
             save_figure=True,
             save_path=SAVE_PATH,
@@ -579,7 +582,6 @@ for idy, model_path in enumerate(models_to_evaluate):
 
             # just plot the dataset first
             cm_decision_boundary = plt.cm.Pastel1
-            cm_data = plt.cm.viridis
 
             fig, axis = plt.subplots(
                 nrows=2, ncols=len(classifiers) + 1, figsize=(25, 5)
@@ -609,7 +611,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                 legend=False,
                 ax=axis[1, 0],
             )
-            axis[1, 0].set_title(f"Training (PCA dim1 vs dim 2)", fontsize=10)
+            axis[1, 0].set_title(f"Validation (PCA dim1 vs dim 2)", fontsize=10)
 
         # iterate over classifiers
         performance = {"training": {}, "validation": {}}
@@ -654,7 +656,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                     # add title
                     axis[idz, idc + 1].set_title(
                         f"{name} (MCC: {performance[set_name][f'{name}_mcc']:0.2f})",
-                        fontsize=10,
+                        fontsize=5,
                     )
         if PCA_NBR_COMPONENTS == 2:
             fig.savefig(

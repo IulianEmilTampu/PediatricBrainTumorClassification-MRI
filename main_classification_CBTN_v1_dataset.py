@@ -167,7 +167,9 @@ def set_up(config: dict):
     # ---------------------
     # SEED EVERYTHING
     # ---------------------
-    pl.seed_everything(config["training_settings"]['random_state'])  # To be reproducable
+    pl.seed_everything(
+        config["training_settings"]["random_state"]
+    )  # To be reproducable
 
 
 def run_training(config: dict) -> None:
@@ -196,19 +198,19 @@ def run_training(config: dict) -> None:
     # select the mean and std for the normalization
     if all([PRETRAINED, not FROZE_WEIGHTS]):
         # use ImageNet stats since the weights were trained using those stats
-        if 'resnet' in config["model_settings"]["model_version"].lower():
+        if "resnet" in config["model_settings"]["model_version"].lower():
             img_mean = ImageNet_ResNet_mean
             img_std = ImageNet_ResNet_std
-        elif 'vgg' in config["model_settings"]["model_version"].lower():
+        elif "vgg" in config["model_settings"]["model_version"].lower():
             img_mean = ImageNet_VGG_mean
             img_std = ImageNet_VGG_std
     else:
         # use MR stats since the encoder weights are trained
         img_mean = MR_mean
         img_std = MR_std
-    
-    img_mean = MR_mean
-    img_std = MR_std
+
+    # img_mean = MR_mean
+    # img_std = MR_std
 
     config["dataloader_settings"]["img_mean"] = img_mean.tolist()
     config["dataloader_settings"]["img_std"] = img_std.tolist()
@@ -260,7 +262,12 @@ def run_training(config: dict) -> None:
     )
 
     # ## get heuristics for this dataset type
-    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = dataset_utilities.get_dataset_heuristics(config['dataset']['name'])
+    (
+        heuristic_for_file_discovery,
+        heuristic_for_subject_ID_extraction,
+        heuristic_for_class_extraction,
+        heuristic_for_rlp_extraction,
+    ) = dataset_utilities.get_dataset_heuristics(config["dataset"]["name"])
 
     # %% RUN REPETITIONS
     for repetition_nbr in range(config["training_settings"]["nbr_repetitions"]):
@@ -320,17 +327,33 @@ def run_training(config: dict) -> None:
                 ]
             )
 
-            # build batch sampler 
+            # build batch sampler
             training_batch_sampler = None
-            if 'use_one_slice_per_subject_within_epoch' in config['dataloader_settings'].keys():
-                if config['dataloader_settings']['use_one_slice_per_subject_within_epoch']:
+            if (
+                "use_one_slice_per_subject_within_epoch"
+                in config["dataloader_settings"].keys()
+            ):
+                if config["dataloader_settings"][
+                    "use_one_slice_per_subject_within_epoch"
+                ]:
                     # build batch sampler
-                    training_batch_sampler = dataset_utilities.OneSlicePerPatientBatchSampler(
-                        df_dataset = dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "training"].reset_index(),
-                        nbr_batches_per_epoch = int(len(files_for_training) / config["dataloader_settings"]["batch_size"]),
-                        nbr_samples_per_batch = config["dataloader_settings"]["batch_size"],
+                    training_batch_sampler = (
+                        dataset_utilities.OneSlicePerPatientBatchSampler(
+                            df_dataset=dataset_split_df.loc[
+                                dataset_split_df[f"fold_{fold+1}"] == "training"
+                            ].reset_index(),
+                            nbr_batches_per_epoch=int(
+                                len(files_for_training)
+                                / config["dataloader_settings"]["batch_size"]
+                            ),
+                            nbr_samples_per_batch=config["dataloader_settings"][
+                                "batch_size"
+                            ],
+                        )
                     )
-                    logger.info(f'Using custom batch sampler (one slice per subject in each epoch.)')
+                    logger.info(
+                        f"Using custom batch sampler (one slice per subject in each epoch.)"
+                    )
 
             training_dataloader = dataset_utilities.CustomDataset(
                 train_sample_paths=files_for_training,
@@ -345,8 +368,14 @@ def run_training(config: dict) -> None:
                 transforms=train_trnsf
                 if config["dataloader_settings"]["augmentation"]
                 else preprocess,
-                training_batch_sampler = training_batch_sampler
+                training_batch_sampler=training_batch_sampler,
             )
+
+            # print relation between classes and one hot encodings
+            target_class_to_one_hot_mapping = (
+                training_dataloader.return_class_to_onehot_encoding_dict()
+            )
+            logger.info(f"{target_class_to_one_hot_mapping}")
 
             # get class weights
             if config["training_settings"]["use_class_weights"]:
@@ -390,7 +419,7 @@ def run_training(config: dict) -> None:
             # build the model based on specifications
             model = model_bucket_CBTN_v1.LitModelWrapper(
                 version=MODEL.lower(),
-                nbr_classes=len(pd.unique(dataset_split_df['target'])),
+                nbr_classes=len(pd.unique(dataset_split_df["target"])),
                 pretrained=PRETRAINED,
                 freeze_percentage=PERCENTAGE_FROZEN,
                 class_weights=CLASS_WEIGHTS,
@@ -403,14 +432,21 @@ def run_training(config: dict) -> None:
                 image_mean=img_mean,
                 image_std=img_std,
                 mpl_nodes=list(config["model_settings"]["mlp_nodes"]),
-                use_SimCLR_pretrained_model=config['model_settings']['use_SimCLR_model'] if 'use_SimCLR_model' in config['model_settings'].keys() else False,
-                SimCLR_model_path=config['model_settings']['SimCLR_model_setitngs']['model_path'] if 'SimCLR_model_setitngs' in config['model_settings'].keys() else None,
+                use_SimCLR_pretrained_model=config["model_settings"]["use_SimCLR_model"]
+                if "use_SimCLR_model" in config["model_settings"].keys()
+                else False,
+                SimCLR_model_path=config["model_settings"]["SimCLR_model_setitngs"][
+                    "model_path"
+                ]
+                if "SimCLR_model_setitngs" in config["model_settings"].keys()
+                else None,
+                labels_as_string=list(target_class_to_one_hot_mapping.keys()),
             ).to(device)
 
             # save model architecture to file
             old_stdout = sys.stdout
             try:
-                if 'vit' not in config["model_settings"]['model_version'].lower():
+                if "vit" not in config["model_settings"]["model_version"].lower():
                     logger.info("Saving model architecture to file...")
                     MODEL_SUMMARY_LOG_FILE = open(
                         os.path.join(save_path, "model_architecture.log"), "w"
@@ -427,7 +463,9 @@ def run_training(config: dict) -> None:
                     MODEL_SUMMARY_LOG_FILE.close()
                     logger.info("Done!")
             except:
-                print("Failed to save model summary to file using torchsummary. Just printing.")
+                print(
+                    "Failed to save model summary to file using torchsummary. Just printing."
+                )
                 print(model)
                 logger.info("Done!")
             sys.stdout = old_stdout
@@ -453,7 +491,7 @@ def run_training(config: dict) -> None:
                     save_path,
                     name=f"TB_fold_{fold+1}",
                 ),
-                log_every_n_steps=5,
+                log_every_n_steps=2,
             )
             trainer.logger._default_hp_metric = None
 

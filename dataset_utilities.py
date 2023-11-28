@@ -290,7 +290,10 @@ def _get_split(
 
     # trim number of sample if requested (usially debugging to run faster)
     if config["debugging_settings"]["dataset_fraction"] != 1.0:
-        dataset_df = dataset_df.head(
+        # dataset_df = dataset_df.head(
+        #     int(len(dataset_df) * config["debugging_settings"]["dataset_fraction"])
+        # )
+        dataset_df = dataset_df.sample(
             int(len(dataset_df) * config["debugging_settings"]["dataset_fraction"])
         )
 
@@ -678,7 +681,7 @@ class CustomDataset(pl.LightningDataModule):
         self.training_batch_sampler = training_batch_sampler
         # TODO make it work even when only train_sample_paths is given
 
-        # sut up to retur targhets of needed
+        # set up to return targhets if needed
         if self.return_classes:
             self.train_per_sample_target_class = training_targets
             self.validation_per_sample_target_class = validation_targets
@@ -741,6 +744,11 @@ class CustomDataset(pl.LightningDataModule):
                 transform=self.preprocess,
                 labels=self.test_per_sample_target_class,
             )
+    def return_class_to_onehot_encoding_dict(self,):
+        if self.return_classes:
+            return self.target_class_to_one_hot_mapping
+        else: 
+            return None 
 
     def train_dataloader(self):
         if self.training_batch_sampler:

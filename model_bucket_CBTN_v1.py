@@ -734,11 +734,13 @@ class LitModelWrapper(pl.LightningModule):
         mpl_nodes: Union[list, tuple] = (1024),
         use_SimCLR_pretrained_model: bool = False,
         SimCLR_model_path: str = None,
+        labels_as_string: Union[list, tuple] = None,
     ):
         super(LitModelWrapper, self).__init__()
 
         self.in_channels = in_channels
         self.nbr_classes = nbr_classes
+        self.labels_as_string = labels_as_string
         self.learning_rate = learning_rate
         self.optimizer = optimizer
         self.scheduler = scheduler
@@ -957,6 +959,7 @@ class LitModelWrapper(pl.LightningModule):
         # save one batch of images
         if len(self.training_step_img) == 0:
             self.training_step_img.append(x.to("cpu"))
+
         # save ground truth and predicstions for confusion matrix plot
         self.training_step_y_hats.append(preds)
         self.training_step_ys.append(y)
@@ -1030,6 +1033,13 @@ class LitModelWrapper(pl.LightningModule):
             title="Example_train_batch",
         )
 
+        # save performance to text
+        self._save_performance_to_text(
+            self.training_step_ys,
+            self.training_step_y_hats,
+            save_name="Training_performance",
+        )
+
         # reset
         self.training_step_img = []
         self.train_metrics.reset()
@@ -1056,6 +1066,13 @@ class LitModelWrapper(pl.LightningModule):
         self.save_imgs(
             _imgs,
             title="Example_validation_batch",
+        )
+
+        # save performance to text
+        self._save_performance_to_text(
+            self.validation_step_ys,
+            self.validation_step_y_hats,
+            save_name="Validation_performance",
         )
 
         # reset
@@ -1086,6 +1103,24 @@ class LitModelWrapper(pl.LightningModule):
             title="Example_test_batch",
         )
 
+    def _save_performance_to_text(self, y, y_hat, save_name="Performance_to_text"):
+        y_hat = torch.cat(y_hat).detach().cpu()
+        y = torch.cat(y).detach().cpu()
+
+        # take softmax of the prediction
+        y_hat_softmax = torch.nn.functional.softmax(y_hat, dim=1)
+
+        # get metrics using the evaluation utility
+        performance_dict = evaluation_utilities.get_performance_metrics(
+            y.numpy(), y_hat_softmax.numpy()
+        )
+        # save to logger
+        self.loggers[0].experiment.add_text(
+            tag=save_name,
+            text_string=f"{performance_dict}",
+            global_step=self.trainer.global_step,
+        )
+
     def _save_confusion_matrix(
         self, y, y_hat, fig_name="Confusion_matrix", metrics=None
     ):
@@ -1103,23 +1138,29 @@ class LitModelWrapper(pl.LightningModule):
             confusion_matrix.compute().detach().cpu().numpy().astype(int)
         )
 
-        df_cm = pd.DataFrame(confusion_matrix_computed)
+        df_cm = pd.DataFrame(
+            confusion_matrix_computed,
+            index=self.labels_as_string,
+            columns=self.labels_as_string,
+        )
         fig_, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 7))
-        sns.heatmap(df_cm, annot=True, cmap="Blues", annot_kws={"size": 20}, ax=ax)
+        sns.heatmap(
+            df_cm, annot=True, cmap="Blues", annot_kws={"size": 20}, ax=ax, fmt="g"
+        )
         ax.set_title(metrics)
         fig_ = fig_.get_figure()
         self.loggers[0].experiment.add_figure(fig_name, fig_, self.current_epoch)
         plt.close(fig_)
 
-        # # save confusion matrix using evaluation utilities (this is for debugging)
-        # evaluation_utilities.plotConfusionMatrix(
-        #     GT=y.detach().numpy(),
-        #     PRED=softmax(y_hat.detach().numpy()),
-        #     classes=["ASTR", "EP", "MED"],
-        #     savePath="/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127",
-        #     saveName=f"{fig_name}_{self.trainer.global_step}",
-        #     draw=False,
-        # )
+        # save confusion matrix using evaluation utilities (this is for debugging)
+        evaluation_utilities.plotConfusionMatrix(
+            GT=y.detach().numpy(),
+            PRED=softmax(y_hat.detach().numpy()),
+            classes=["ASTR", "EP", "MED"],
+            savePath="/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231128",
+            saveName=f"{fig_name}_{self.trainer.global_step}",
+            draw=False,
+        )
 
     def save_imgs(self, imgs: torch.Tensor, title: str = "TB_saved_img"):
         with torch.no_grad():

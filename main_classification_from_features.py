@@ -281,7 +281,7 @@ classifiers = [
 
 
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -291,7 +291,7 @@ for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
 print(f"Found {len(models_to_evaluate)} to work on.")
 
 # models_to_evaluate = [
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124/ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t100754/REPETITION_2"
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127/ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t094039/REPETITION_1"
 # ]
 
 for idy, model_path in enumerate(models_to_evaluate):
@@ -336,6 +336,7 @@ for idy, model_path in enumerate(models_to_evaluate):
 
     # %% BUILD DATASETS
     # load dataset_split_infromation
+    print(DATASET_INFO["dataset_split_path"])
     dataset_split = pd.read_csv(DATASET_INFO["dataset_split_path"])
     try:
         dataset_split = dataset_split.drop(columns=["level_0", "index"])
@@ -343,24 +344,30 @@ for idy, model_path in enumerate(models_to_evaluate):
         print()
 
     # get mapping of the classes to one hot encoding
-    unique_targe_classes = dict.fromkeys(pd.unique(dataset_split["target"]))
+    unique_targe_classes = list(pd.unique(dataset_split["target"]))
+    unique_targe_classes.sort()
+    unique_targe_classes = dict.fromkeys(unique_targe_classes)
+
     one_hot_encodings = torch.nn.functional.one_hot(
         torch.tensor(list(range(len(unique_targe_classes))))
     )
     # build mapping between class and one hot encoding
     target_class_to_one_hot_mapping = dict(zip(unique_targe_classes, one_hot_encodings))
 
+    print(target_class_to_one_hot_mapping)
+
     # loop through all the available folds
     for fold_idx, fold in enumerate(
         glob.glob(os.path.join(MODEL_INFO["path"], "TB_fold*", ""))
     ):
+        fold_idx = int(os.path.basename(pathlib.Path(fold)).split("_")[-1])
         print(
-            f"\nModel {idy+1} of {len(models_to_evaluate)} ({model_version} {repetition} {fold_idx+1} {session_time})"
+            f"\nModel {idy+1} of {len(models_to_evaluate)} ({model_version} {repetition} {fold_idx} {session_time})"
         )
         # % BUILD TRAINING AND VALIDATION DATASETS
         # ######### training set
         training_files_for_inference = dataset_split.loc[
-            dataset_split[f"fold_{fold_idx+1}"] == "training"
+            dataset_split[f"fold_{fold_idx}"] == "training"
         ].reset_index()
         # make torch tensor labels
         training_labels = [
@@ -375,9 +382,17 @@ for idy, model_path in enumerate(models_to_evaluate):
             training_labels_for_df,
         )
 
+        # print summary of files
+        [
+            print(
+                f"{c}: {len(training_files_for_inference.loc[training_files_for_inference['target']==c])}"
+            )
+            for c in list(pd.unique(training_files_for_inference["target"]))
+        ]
+
         # ######### validation set
         validation_files_for_inference = dataset_split.loc[
-            dataset_split[f"fold_{fold_idx+1}"] == "validation"
+            dataset_split[f"fold_{fold_idx}"] == "validation"
         ].reset_index()
         # make torch tensor labels
         validation_labels = [
@@ -391,6 +406,11 @@ for idy, model_path in enumerate(models_to_evaluate):
             "one_hot_encodig",
             validation_labels_for_df,
         )
+        [
+            print(
+                f"{len(validation_files_for_inference.loc[validation_files_for_inference['target']==c]) for c in list(pd.unique(validation_files_for_inference['target']))}"
+            )
+        ]
 
         img_mean = [0.5] * 3
         img_std = [0.5] * 3
@@ -443,7 +463,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                 labels=training_labels,
                 return_file_path=False,
             ),
-            num_workers=10,
+            num_workers=0,
             batch_size=32,
         )
 
@@ -454,7 +474,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                 labels=validation_labels,
                 return_file_path=False,
             ),
-            num_workers=10,
+            num_workers=0,
             batch_size=32,
         )
 
@@ -488,6 +508,26 @@ for idy, model_path in enumerate(models_to_evaluate):
         feature_extractor.to(device)
         feature_extractor.eval()
 
+        # # %% DEBUG BUILD TRAINING DATALOADER
+        # importlib.reload(dataset_utilities)
+
+        # training_dataloader = dataset_utilities.CustomDataset(
+        #     train_sample_paths=list(training_files_for_inference["file_path"]),
+        #     validation_sample_paths=list(validation_files_for_inference["file_path"]),
+        #     test_sample_paths=None,
+        #     training_targets=list(training_files_for_inference["target"]),
+        #     validation_targets=list(validation_files_for_inference["target"]),
+        #     test_targets=None,
+        #     batch_size=32,
+        #     num_workers=15,
+        #     preprocess=preprocess,
+        #     transforms=preprocess,
+        #     training_batch_sampler=None,
+        # )
+        # training_dataloader.setup()
+        # training_dataset = training_dataloader.train_dataloader()
+        # validation_dataset = training_dataloader.val_dataloader()
+
         # %% OBTAIN ORIGINAL DL CLASSIFIER PREDICTIONS
         original_DL_classifier_performance = {"training": {}, "validation": {}}
 
@@ -498,23 +538,80 @@ for idy, model_path in enumerate(models_to_evaluate):
             original_DL_classifier_performance[data_name][
                 f"original_DL_accuracy"
             ] = accuracy_score(
-                np.argmax(labels, axis=1), np.argmax(softmax(pred), axis=1)
+                np.argmax(labels, axis=1), np.argmax(softmax(pred, axis=1), axis=1)
             )
             original_DL_classifier_performance[data_name][
                 f"original_DL_mcc"
             ] = matthews_corrcoef(
-                np.argmax(labels, axis=1), np.argmax(softmax(pred), axis=1)
+                np.argmax(labels, axis=1), np.argmax(softmax(pred, axis=1), axis=1)
             )
 
             # save confusion matrix
             evaluation_utilities.plotConfusionMatrix(
                 GT=labels,
-                PRED=softmax(pred),
+                PRED=softmax(pred, axis=1),
                 classes=list(unique_targe_classes.keys()),
                 savePath=SAVE_PATH,
-                saveName=f"Original_model_{data_name}_performance_fold_{fold_idx+1}",
+                saveName=f"Original_model_{data_name}_performance_fold_{fold_idx}",
                 draw=False,
             )
+
+            # ## USE TORCH
+            import torchmetrics
+
+            confusion_matrix = torchmetrics.ConfusionMatrix(
+                task="multiclass",
+                num_classes=len(list(unique_targe_classes.keys())),
+                threshold=0.05,
+            )
+
+            confusion_matrix(
+                torch.argmax(torch.tensor(softmax(pred, axis=1)), dim=1),
+                torch.argmax(torch.tensor(labels), dim=1),
+            )
+            confusion_matrix_computed = (
+                confusion_matrix.compute().detach().cpu().numpy().astype(int)
+            )
+
+            string_labels = np.unique(list(unique_targe_classes.keys()))
+            df_cm = pd.DataFrame(
+                confusion_matrix_computed, index=string_labels, columns=string_labels
+            )
+            fig_, ax = plt.subplots(nrows=1, ncols=1, figsize=(10, 7))
+            sns.heatmap(
+                df_cm, annot=True, cmap="Blues", annot_kws={"size": 20}, ax=ax, fmt="g"
+            )
+            plt.xlabel("Predicted")
+            plt.ylabel("Actual")
+            fig_.savefig(
+                os.path.join(
+                    SAVE_PATH,
+                    f"Original_model_{data_name}_performance_fold_{fold_idx}_TORCH.png",
+                ),
+                bbox_inches="tight",
+                dpi=100,
+            )
+            plt.close(fig_)
+
+            # if data_name == "training":
+            #     [
+            #         print(os.path.basename(f), t, l)
+            #         for f, t, l in zip(
+            #             list(training_files_for_inference["file_path"]),
+            #             list(training_files_for_inference["target"]),
+            #             labels,
+            #         )
+            #     ]
+            # else:
+            #     [
+            #         print(os.path.basename(f), t, l)
+            #         for f, t, l in zip(
+            #             list(validation_files_for_inference["file_path"]),
+            #             list(validation_files_for_inference["target"]),
+            #             labels,
+            #         )
+            #     ]
+
         # %% OBTAIN TRAINING AND VALIDATION FEATURES
         training_features, training_labels = get_features(
             feature_extractor,
@@ -544,7 +641,7 @@ for idy, model_path in enumerate(models_to_evaluate):
             draw=False,
             save_figure=True,
             save_path=SAVE_PATH,
-            prefix=f"PCA_training_set_fold_{fold_idx+1}",
+            prefix=f"PCA_training_set_fold_{fold_idx}",
             nbr_legend_columns=4,
         )
 
@@ -557,7 +654,7 @@ for idy, model_path in enumerate(models_to_evaluate):
             draw=False,
             save_figure=True,
             save_path=SAVE_PATH,
-            prefix=f"PCA_validation_set_fold_{fold_idx+1}",
+            prefix=f"PCA_validation_set_fold_{fold_idx}",
         )
 
         # reperform PCA with the set number of components
@@ -660,7 +757,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                     )
         if PCA_NBR_COMPONENTS == 2:
             fig.savefig(
-                os.path.join(SAVE_PATH, f"Classifiers performance_{fold_idx+1}.pdf"),
+                os.path.join(SAVE_PATH, f"Classifiers performance_{fold_idx}.pdf"),
                 dpi=100,
                 bbox_inches="tight",
             )
@@ -675,7 +772,7 @@ for idy, model_path in enumerate(models_to_evaluate):
                 len(np.unique(y_train)),
                 "_".join(list(unique_targe_classes.keys())),
                 "full" if X_train.shape[0] > 1500 else "[45,55]",
-                fold_idx + 1,
+                fold_idx,
                 set_name,
                 PCA_NBR_COMPONENTS,
             ]

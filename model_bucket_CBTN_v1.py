@@ -65,6 +65,8 @@ def make_classification_mpl(
         classification_layers.append(
             torch.nn.Linear(in_features=in_features, out_features=nbr_nodes)
         )
+        # classification_layers.append(torch.nn.InstanceNorm1d(num_features=nbr_nodes))
+        classification_layers.append(torch.nn.BatchNorm1d(num_features=nbr_nodes))
         classification_layers.append(nn.ReLU())
         classification_layers.append(torch.nn.Dropout(p=dropout_rate, inplace=False))
         # update in_features
@@ -666,8 +668,6 @@ class ViTs(torch.nn.Module):
 
 
 # %% BUILD CLASSIFIER FROM SimCLR model
-
-
 class ClassifierFromSimCLR(torch.nn.Module):
     def __init__(
         self,
@@ -693,6 +693,13 @@ class ClassifierFromSimCLR(torch.nn.Module):
 
         self.model = torch.load(self.SimCLR_model_path)
         self.model = self.model.convnet
+
+        if self.freeze_percentage == 1:
+            # freeze the feature extractor
+            for idx, child in enumerate(self.model.children()):
+                # freeze if this children is in the list of the children to freez for this percentage
+                for param in child.parameters():
+                    param.requires_grad = False
 
         # build classifier head
         if isinstance(self.dropout_rate, float):

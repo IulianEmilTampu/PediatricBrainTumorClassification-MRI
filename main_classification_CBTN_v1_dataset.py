@@ -40,60 +40,6 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
 """
-Partially freezing is dependent on model architecture.
-
-ResNet50 -> it has 9 children in the model architecture. 
-- Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
-- Childrens 4 (64 -> 256, 10 convs), 5 (256 -> 512, 10 convs), 6 (512 -> 1024, 19 convs) and 7 (1024 -> 2048, 10 convs) are Sequentials making up most of the model.
-- Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
-- PERCENTAGE_FROZEN = 0.40: children 0 to 5 (7, 6 are training)
-- PERCENTAGE_FROZEN = 0.20.: children 0 to 4 (7, 6, 5 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-
-ResNet18 -> it has 9 children in the model architecture. 
-- Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
-- Childrens 4 (64 -> 64, 4 convs), 5 (64 -> 128, 5 convs), 6 (128 -> 256, 5 convs) and 7 (256 -> 512, 5 convs) are Sequentials making up most of the model.
-- Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
-- PERCENTAGE_FROZEN = 0.60: children 0 to 5 (7, 6 are training)
-- PERCENTAGE_FROZEN = 0.40.: children 0 to 4 (7, 6, 5 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-ResNet9 -> it has 6 children in the model architecture. (https://github.com/Moddy2024/ResNet-9/tree/main)
-- Children 0 (conv, BatchNorm, ReLU) brings the input from 3 channels to 64 channels
-- Children 1 (conv, BatchNorm, ReLU, MaxPool) 64 -> 128
-- Children 2 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 128 -> 128
-- Children 3 (conv, BatchNorm, ReLU, MaxPool) 128 -> 256
-- Children 4 (conv, BatchNorm, ReLU, MaxPool) 256 -> 512
-- Children 5 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 512 -> 512
-- Children 6 (GlobalAveragePool, Flatten, Dropout, Dense) 512 -> classes (this is replaced by the new classification head)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 4 (5 is training)
-- PERCENTAGE_FROZEN = 0.60: children 0 to 3 (5, 4 are training)
-- PERCENTAGE_FROZEN = 0.40.: children 0 to 2 (5, 4, 3 are training)
-- PERCENTAGE_FROZEN = 0.20.: children 0 to 1 (5, 4, 3, 2 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 (5, 4, 3, 2, 1 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-ViT vit_b_N - > it has 3 children of which the last is the classification head and child 1 is the encoder.
-The encoder has 3 children of which the second is a Sequential with 12 EncoderBlocks (this can be accessed using len(net.encoder.layers))
-Here the fraction of layers to be frozen depends on the length of the Sequential layer in the model encoder. 
-So, if there are 12 encoding blocks, a fraction of 0.7 will freeze int(12 * 0.7) encoding layers.
-"""
-
-"""
 Some useful links 
 https://spandan-madan.github.io/A-Collection-of-important-tasks-in-pytorch/
 """
@@ -108,7 +54,6 @@ Meeting Anders 25/10/2023
 - RadImageNet
 -  
 """
-
 
 # local imports
 import model_bucket_CBTN_v1
@@ -172,17 +117,73 @@ def set_up(config: dict):
     )  # To be reproducable
 
 
+def get_info_from_SimCLR_pretraining(config: dict):
+    logger = logging.getLogger("main.get_info_from_SimCLR_pretraining")
+    logger.info(
+        "Loading datasplit information from file (SimCLR pretraining on CBTN data)."
+    )
+
+    # loop though the repetition folders and get the datasplit .csv file and model paths.
+    info_from_simclr_pretraining = {}
+    repetition_folders = glob.glob(
+        os.path.join(
+            config["model_settings"]["SimCLR_prettrained_model_setitngs"]["model_path"],
+            "REPETITION_*",
+        )
+    )
+    for rep in repetition_folders:
+        # get repetition number
+        rep_nbr = int(os.path.basename(pathlib.Path(rep)).split("_")[-1])
+        info_from_simclr_pretraining[rep_nbr] = {
+            "datasplit_path": os.path.join(rep, "data_split_information.csv"),
+            "per_fold_model_paths": {},
+        }
+        # loop throught the folds and get the path to the pre-trained model
+        fold_folders = glob.glob(os.path.join(rep, "TB_fold_*"))
+        for fold in fold_folders:
+            # get fold number
+            fold_nbr = int(os.path.basename(pathlib.Path(fold)).split("_")[-1])
+            info_from_simclr_pretraining[rep_nbr]["per_fold_model_paths"][
+                fold_nbr
+            ] = os.path.join(fold, "last.pt")
+
+    # adjust the config valus for the number of folds and repetitions
+    nbr_folds = len(fold_folders)
+    config["training_settings"]["nbr_inner_cv_folds"] = nbr_folds
+    config["training_settings"]["nbr_repetitions"] = len(repetition_folders)
+    logger.info(
+        f"Resetting the number of inner folds ({nbr_folds}) and repetitions ({len(repetition_folders)}) using the infromation from the SimCLR pretraining folder."
+    )
+
+    return info_from_simclr_pretraining
+
+
 def run_training(config: dict) -> None:
     logger = logging.getLogger("main.run_training")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #  load HP from configyaml file
-    PRETRAINED = config["model_settings"]["pre_trained"]
-    FROZE_WEIGHTS = config["model_settings"]["freeze_weights"]
-    PERCENTAGE_FROZEN = config["model_settings"]["percentage_freeze_weights"]
+
+    #  load HP from configyaml file (just for convenience)
     BATCH_SIZE = config["dataloader_settings"]["batch_size"]
     LEARNING_RATE = config["training_settings"]["learning_rate"]
     MODEL = config["model_settings"]["model_version"]
     INPUT_SIZE = list(config["dataloader_settings"]["input_size"])
+    # pretraining
+    PRETRAINED = config["model_settings"]["pre_trained"]
+    PRETRAINED_TYPE = (
+        "ImageNet"
+        if not config["model_settings"]["use_SimCLR_pretrained_model"]
+        else "SimCLR"
+    )
+    PRETRAINED_DATASET = (
+        config["model_settings"]["SimCLR_prettrained_model_setitngs"][
+            "pretraining_dataset"
+        ].upper()
+        if config["model_settings"]["use_SimCLR_pretrained_model"]
+        else "ImageNet"
+    )
+
+    FROZE_WEIGHTS = config["model_settings"]["freeze_weights"]
+    PERCENTAGE_FROZEN = config["model_settings"]["percentage_freeze_weights"]
 
     # %% DATA GENERATOR
     # ## define mean and std for normalization
@@ -209,9 +210,7 @@ def run_training(config: dict) -> None:
         img_mean = MR_mean
         img_std = MR_std
 
-    # img_mean = MR_mean
-    # img_std = MR_std
-
+    # save image mean and std
     config["dataloader_settings"]["img_mean"] = img_mean.tolist()
     config["dataloader_settings"]["img_std"] = img_std.tolist()
 
@@ -261,71 +260,128 @@ def run_training(config: dict) -> None:
         ],
     )
 
-    # ## get heuristics for this dataset type
-    (
-        heuristic_for_file_discovery,
-        heuristic_for_subject_ID_extraction,
-        heuristic_for_class_extraction,
-        heuristic_for_rlp_extraction,
-    ) = dataset_utilities.get_dataset_heuristics(config["dataset"]["name"])
+    # ## If using a SimCLR model pretrained on CBTN data, we use the same data splits for training the classifier.
+    # This is important to avoid data leakage between the pre-training and the classifier.
+    # When using a SimCLR pre-trained model on CBTN, the number of repetitions and folds set in the ocnfiguration file are over-written
+    # to match the ones of the SimCLR pre-training. The paths of the datasplit .csv files are obtained here and used later in each repetititon
+
+    if all(
+        [
+            PRETRAINED_TYPE == "SimCLR",
+            PRETRAINED_DATASET == "CBTN",
+        ]
+    ):
+        info_from_simclr_pretraining = get_info_from_SimCLR_pretraining(config)
+    else:
+        # ## get heuristics for this dataset type
+        (
+            heuristic_for_file_discovery,
+            heuristic_for_subject_ID_extraction,
+            heuristic_for_class_extraction,
+            heuristic_for_rlp_extraction,
+            heuristic_for_age_extraction,
+        ) = dataset_utilities.get_dataset_heuristics(config["dataset"]["name"])
 
     # %% RUN REPETITIONS
     for repetition_nbr in range(config["training_settings"]["nbr_repetitions"]):
-        dataset_split_df = dataset_utilities._get_split(
-            config,
-            heuristic_for_file_discovery=heuristic_for_file_discovery,
-            heuristic_for_subject_ID_extraction=heuristic_for_subject_ID_extraction,
-            heuristic_for_class_extraction=heuristic_for_class_extraction,
-            heuristic_for_relative_position_extraction=heuristic_for_rlp_extraction,
-            repetition_number=repetition_nbr,
-            randomize_subject_labels=config["dataloader_settings"][
-                "randomize_subject_labels"
-            ],
-            randomize_slice_labels=config["dataloader_settings"][
-                "randomize_slice_labels"
-            ],
-            select_slices_in_range=config["dataloader_settings"][
-                "select_slices_in_range"
-            ],
-        )
+        if all(
+            [
+                PRETRAINED_TYPE == "SimCLR",
+                PRETRAINED_DATASET == "CBTN",
+            ]
+        ):
+            # load the data split used for SimCLR training
+            dataset_split_df = pd.read_csv(
+                info_from_simclr_pretraining[repetition_nbr + 1]["datasplit_path"]
+            )
+            # print information about training, validation and testing files since not performing the split but loading from file
+            dataset_utilities.print_summary_from_dataset_split(dataset_split_df)
+
+        else:
+            dataset_split_df = dataset_utilities._get_split(
+                config,
+                heuristic_for_file_discovery=heuristic_for_file_discovery,
+                heuristic_for_subject_ID_extraction=heuristic_for_subject_ID_extraction,
+                heuristic_for_class_extraction=heuristic_for_class_extraction,
+                heuristic_for_relative_position_extraction=heuristic_for_rlp_extraction,
+                heuristic_for_age_extraction=heuristic_for_age_extraction,
+                repetition_number=repetition_nbr,
+                randomize_subject_labels=config["dataloader_settings"][
+                    "randomize_subject_labels"
+                ],
+                randomize_slice_labels=config["dataloader_settings"][
+                    "randomize_slice_labels"
+                ],
+                select_slices_in_range=config["dataloader_settings"][
+                    "select_slices_in_range"
+                ],
+            )
+
+        # normalize age is requested
+        if all(
+            [
+                config["dataloader_settings"]["use_age"],
+                config["dataloader_settings"]["normalize_age"],
+            ]
+        ):
+            dataset_split_df["age_normalized"] = [None] * len(dataset_split_df)
+            # do this for each fold separately (only use the training data for the computation of the mean and std)
+            for fold in range(config["training_settings"]["nbr_inner_cv_folds"]):
+                # get values for this fold
+                age_in_days_array = np.array(
+                    dataset_split_df.loc[
+                        dataset_split_df[f"fold_{fold+1}"] == "training"
+                    ]["age_in_days"]
+                )
+                index_df_rows = dataset_split_df.index[
+                    dataset_split_df[f"fold_{fold+1}"] == "training"
+                ].tolist()
+
+                # normalize age in days using mean and std in the [0.5, 99.5] percentile
+                age_mean = np.mean(
+                    age_in_days_array[
+                        np.logical_and(
+                            age_in_days_array > np.percentile(age_in_days_array, 0.5),
+                            age_in_days_array <= np.percentile(age_in_days_array, 99.5),
+                        )
+                    ]
+                )
+                age_std = np.std(
+                    age_in_days_array[
+                        np.logical_and(
+                            age_in_days_array > np.percentile(age_in_days_array, 0.5),
+                            age_in_days_array <= np.percentile(age_in_days_array, 99.5),
+                        )
+                    ]
+                )
+
+                normalized_age = (age_in_days_array - age_mean) / age_std
+
+                # save values
+                dataset_split_df.loc[
+                    index_df_rows, "age_normalized"
+                ] = normalized_age.tolist()
+        else:
+            dataset_split_df["age_normalized"] = [None] * len(dataset_split_df)
+
         # %% RUN TRAINING FOR THE DIFFERENT FOLDS
         for fold in range(config["training_settings"]["nbr_inner_cv_folds"]):
             logger.info(
-                f'Working on fold {fold+1}/({config["training_settings"]["nbr_inner_cv_folds"]}) of repetition {repetition_nbr+1}/{config["training_settings"]["nbr_repetitions"]}'
+                f'Working on fold {fold+1}/{config["training_settings"]["nbr_inner_cv_folds"]} of repetition {repetition_nbr+1}/{config["training_settings"]["nbr_repetitions"]}'
             )
 
             # ## get training validation and testing files for this repetition and fold
-            files_for_training = list(
-                dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "training"][
-                    "file_path"
-                ]
-            )
-            training_targets = list(
-                dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "training"][
-                    "target"
-                ]
-            )
-            files_for_validation = list(
-                dataset_split_df.loc[
-                    dataset_split_df[f"fold_{fold+1}"] == "validation"
-                ]["file_path"]
-            )
-            validation_targets = list(
-                dataset_split_df.loc[
-                    dataset_split_df[f"fold_{fold+1}"] == "validation"
-                ]["target"]
-            )
+            samples_for_training = dataset_split_df.loc[
+                dataset_split_df[f"fold_{fold+1}"] == "training"
+            ].reset_index()
 
-            files_for_testing = list(
-                dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "test"][
-                    "file_path"
-                ]
-            )
-            test_targets = list(
-                dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "test"][
-                    "target"
-                ]
-            )
+            samples_for_validation = dataset_split_df.loc[
+                dataset_split_df[f"fold_{fold+1}"] == "validation"
+            ].reset_index()
+
+            samples_for_testing = dataset_split_df.loc[
+                dataset_split_df[f"fold_{fold+1}"] == "test"
+            ].reset_index()
 
             # build batch sampler
             training_batch_sampler = None
@@ -339,11 +395,9 @@ def run_training(config: dict) -> None:
                     # build batch sampler
                     training_batch_sampler = (
                         dataset_utilities.OneSlicePerPatientBatchSampler(
-                            df_dataset=dataset_split_df.loc[
-                                dataset_split_df[f"fold_{fold+1}"] == "training"
-                            ].reset_index(),
+                            df_dataset=samples_for_training,
                             nbr_batches_per_epoch=int(
-                                len(files_for_training)
+                                len(samples_for_training)
                                 / config["dataloader_settings"]["batch_size"]
                             ),
                             nbr_samples_per_batch=config["dataloader_settings"][
@@ -356,12 +410,22 @@ def run_training(config: dict) -> None:
                     )
 
             training_dataloader = dataset_utilities.CustomDataset(
-                train_sample_paths=files_for_training,
-                validation_sample_paths=files_for_validation,
-                test_sample_paths=files_for_testing,
-                training_targets=training_targets,
-                validation_targets=validation_targets,
-                test_targets=test_targets,
+                train_sample_paths=list(samples_for_training["file_path"]),
+                validation_sample_paths=list(samples_for_validation["file_path"]),
+                test_sample_paths=list(samples_for_testing["file_path"]),
+                training_targets=list(samples_for_training["target"]),
+                validation_targets=list(samples_for_validation["target"]),
+                test_targets=list(samples_for_testing["target"]),
+                return_age=config["dataloader_settings"]["use_age"],
+                train_sample_age=list(samples_for_training["age_normalized"])
+                if config["dataloader_settings"]["normalize_age"]
+                else list(samples_for_training["age_in_days"]),
+                validation_sample_age=list(samples_for_validation["age_normalized"])
+                if config["dataloader_settings"]["normalize_age"]
+                else list(samples_for_validation["age_in_days"]),
+                test_sample_age=list(samples_for_testing["age_normalized"])
+                if config["dataloader_settings"]["normalize_age"]
+                else list(samples_for_testing["age_in_days"]),
                 batch_size=config["dataloader_settings"]["batch_size"],
                 num_workers=config["dataloader_settings"]["nbr_workers"],
                 preprocess=preprocess,
@@ -400,13 +464,16 @@ def run_training(config: dict) -> None:
                 )
 
             # %% TRAIN MODEL
-            save_name = f"{MODEL}_pretrained_{PRETRAINED}_frozen_{FROZE_WEIGHTS}_{PERCENTAGE_FROZEN}_LR_{LEARNING_RATE}_BATCH_{BATCH_SIZE}_AUGMENTATION_{config['dataloader_settings']['augmentation']}_OPTIM_{config['training_settings']['optimizer']}_SCHEDULER_{config['training_settings']['scheduler']}_MLPNODES_{config['model_settings']['mlp_nodes'][0] if len(config['model_settings']['mlp_nodes'])!=0 else 0}_{config['logging_settings']['start_time']}"
+            save_name = f"{MODEL}_pretrained_{PRETRAINED}_{PRETRAINED_TYPE}_dataset_{PRETRAINED_DATASET}_frozen_{FROZE_WEIGHTS}_{PERCENTAGE_FROZEN}_LR_{LEARNING_RATE}_BATCH_{BATCH_SIZE}_AUGMENTATION_{config['dataloader_settings']['augmentation']}_OPTIM_{config['training_settings']['optimizer']}_SCHEDULER_{config['training_settings']['scheduler']}_MLPNODES_{config['model_settings']['mlp_nodes'][0] if len(config['model_settings']['mlp_nodes'])!=0 else 0}_useAge_{config['dataloader_settings']['use_age'] if 'use_age' in config['dataloader_settings'].keys() else False}_{config['logging_settings']['start_time']}"
+            print(save_name)
+            sys.exit()
             save_path = os.path.join(
                 config["working_dir"],
                 "trained_model_archive",
-                # f"TESTs_{datetime.now().strftime('%Y%m%d')}_2DSDM4_exp",
+                # f"ADDING_AGE_TO_TRAINING",
                 f"TESTs_{datetime.now().strftime('%Y%m%d')}",
                 save_name,
+                # "TEST",
                 f"REPETITION_{repetition_nbr+1}",
             )
             Path(save_path).mkdir(exist_ok=True, parents=True)
@@ -441,6 +508,12 @@ def run_training(config: dict) -> None:
                 if "SimCLR_model_setitngs" in config["model_settings"].keys()
                 else None,
                 labels_as_string=list(target_class_to_one_hot_mapping.keys()),
+                use_age=config["dataloader_settings"]["use_age"]
+                if "use_age" in config["dataloader_settings"].keys()
+                else False,
+                age_encoder_mlp_nodes=config["model_settings"]["age_encoder_mlp_nodes"]
+                if "age_encoder_mlp_nodes" in config["model_settings"].keys()
+                else None,
             ).to(device)
 
             # save model architecture to file
@@ -452,13 +525,17 @@ def run_training(config: dict) -> None:
                         os.path.join(save_path, "model_architecture.log"), "w"
                     )
                     sys.stdout = MODEL_SUMMARY_LOG_FILE
-                    summary(
-                        model,
-                        (
+                    if config["dataloader_settings"]["use_age"]:
+                        aus_input = ((3, INPUT_SIZE[0], INPUT_SIZE[1]), (1))
+                    else:
+                        aus_input = (
                             3,
                             INPUT_SIZE[0],
                             INPUT_SIZE[1],
-                        ),
+                        )
+                    summary(
+                        model,
+                        aus_input,
                     )
                     MODEL_SUMMARY_LOG_FILE.close()
                     logger.info("Done!")

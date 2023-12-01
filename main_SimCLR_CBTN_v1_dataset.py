@@ -98,21 +98,10 @@ Some useful links
 https://spandan-madan.github.io/A-Collection-of-important-tasks-in-pytorch/
 """
 
-"""
-Meeting Anders 25/10/2023
-
-- repeat results using the custom model.
-- Use ADC data
-- Use pyRadiomics to check the data disctibution and features
-- Try to feed only the tumor region
-- RadImageNet
--  
-"""
-
-
 # local imports
 import model_bucket_CBTN_v1
 import dataset_utilities
+
 
 def set_up(config: dict):
     # save the starting time for the SimCLR training
@@ -149,13 +138,15 @@ def set_up(config: dict):
     # ---------------------
     # SEED EVERYTHING
     # ---------------------
-    pl.seed_everything(config['SimCLR']["training_settings"]['random_state'])  # To be reproducable
+    pl.seed_everything(
+        config["SimCLR"]["training_settings"]["random_state"]
+    )  # To be reproducable
 
 
 def run_SimCLR_training(config: dict) -> None:
     logger = logging.getLogger("main.run_training")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+
     # get out hp from config.yaml dictionary (this is just for convenience)
     PRETRAINED = config["model_settings"]["pre_trained"]
     FROZE_WEIGHTS = config["model_settings"]["freeze_weights"]
@@ -179,7 +170,7 @@ def run_SimCLR_training(config: dict) -> None:
     # select the mean and std for the normalization
     if all([PRETRAINED, not FROZE_WEIGHTS]):
         # use ImageNet stats since the weights were trained using those stats
-        if 'resnet' in config["model_settings"]["model_version"].lower():
+        if "resnet" in config["model_settings"]["model_version"].lower():
             img_mean = ImageNet_ResNet_mean
             img_std = ImageNet_ResNet_std
         # elif 'vgg' in config['SimCLR']["model_settings"]["model_version"].lower():
@@ -189,44 +180,44 @@ def run_SimCLR_training(config: dict) -> None:
         # use MR stats since the encoder weights are trained
         img_mean = MR_mean
         img_std = MR_std
-    
-    img_mean = MR_mean
-    img_std = MR_std
 
     config["dataloader_settings"]["img_mean"] = img_mean.tolist()
     config["dataloader_settings"]["img_std"] = img_std.tolist()
 
     # ## define contrastive transforms
-    contrastive_transforms = T.Compose( 
+    contrastive_transforms = T.Compose(
         [
-        T.RandomResizedCrop(
+            T.RandomResizedCrop(
                 size=INPUT_SIZE,
                 scale=(0.6, 1.5),
                 ratio=(0.75, 1.33),
                 antialias=True,
             ),
-        T.RandomHorizontalFlip(),
-        T.RandomVerticalFlip(),
-        T.RandomRotation(config["augmentation_settings"]["rotation"]),
-        T.RandomApply(
-            [
-                T.ColorJitter(
-                    brightness=config["augmentation_settings"]["brigntess_rage"], contrast=config["augmentation_settings"]["contrast_rage"], saturation=config["augmentation_settings"]["saturation"], hue=config["augmentation_settings"]["hue"]
-                ),
-                T.GaussianBlur(kernel_size=9),
-            ],
-            p=0.8,
-        ),
-        T.RandomApply([
-            T.TrivialAugmentWide(
-                num_magnitude_bins=15, fill=-1
-            )], p=1 if config['augmentation_settings']['use_trivialAugWide'] else 0),
-        T.ToTensor(),
-        T.Normalize(
+            T.RandomHorizontalFlip(),
+            T.RandomVerticalFlip(),
+            T.RandomRotation(config["augmentation_settings"]["rotation"]),
+            T.RandomApply(
+                [
+                    T.ColorJitter(
+                        brightness=config["augmentation_settings"]["brigntess_rage"],
+                        contrast=config["augmentation_settings"]["contrast_rage"],
+                        saturation=config["augmentation_settings"]["saturation"],
+                        hue=config["augmentation_settings"]["hue"],
+                    ),
+                    T.GaussianBlur(kernel_size=9),
+                ],
+                p=0.8,
+            ),
+            T.RandomApply(
+                [T.TrivialAugmentWide(num_magnitude_bins=15, fill=-1)],
+                p=1 if config["augmentation_settings"]["use_trivialAugWide"] else 0,
+            ),
+            T.ToTensor(),
+            T.Normalize(
                 mean=img_mean,
                 std=img_std,
             ),
-    ],
+        ],
     )
 
     preprocess = T.Compose(
@@ -241,7 +232,13 @@ def run_SimCLR_training(config: dict) -> None:
     )
 
     # ## get heuristics for this dataset type
-    heuristic_for_file_discovery, heuristic_for_subject_ID_extraction, heuristic_for_class_extraction, heuristic_for_rlp_extraction = dataset_utilities.get_dataset_heuristics(config['dataset']['name'])
+    (
+        heuristic_for_file_discovery,
+        heuristic_for_subject_ID_extraction,
+        heuristic_for_class_extraction,
+        heuristic_for_rlp_extraction,
+        heuristic_for_age_extraction,
+    ) = dataset_utilities.get_dataset_heuristics(config["dataset"]["name"])
     # %% RUN REPETITIONS
     for repetition_nbr in range(config["training_settings"]["nbr_repetitions"]):
         dataset_split_df = dataset_utilities._get_split(
@@ -250,6 +247,7 @@ def run_SimCLR_training(config: dict) -> None:
             heuristic_for_subject_ID_extraction=heuristic_for_subject_ID_extraction,
             heuristic_for_class_extraction=heuristic_for_class_extraction,
             heuristic_for_relative_position_extraction=heuristic_for_rlp_extraction,
+            heuristic_for_age_extraction=heuristic_for_age_extraction,
             repetition_number=repetition_nbr,
             randomize_subject_labels=config["dataloader_settings"][
                 "randomize_subject_labels"
@@ -301,17 +299,28 @@ def run_SimCLR_training(config: dict) -> None:
                 ]
             )
 
-            # build batch sampler 
+            # build batch sampler
             training_batch_sampler = None
-            if 'use_one_slice_per_subject_within_epoch' in config['dataloader_settings'].keys():
-                if config['dataloader_settings']['use_one_slice_per_subject_within_epoch']:
+            if "use_slices_as_views" in config["dataloader_settings"].keys():
+                if config["dataloader_settings"]["use_slices_as_views"]:
                     # build batch sampler
-                    training_batch_sampler = dataset_utilities.SimCLRBatchSamplerTwoSubjectSlicesAsView(
-                        df_dataset = dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "training"].reset_index(),
-                        nbr_batches_per_epoch = int(len(files_for_training) / config["dataloader_settings"]["batch_size"]),
-                        nbr_samples_per_batch = config["dataloader_settings"]["batch_size"],
+                    training_batch_sampler = (
+                        dataset_utilities.SimCLRBatchSamplerTwoSubjectSlicesAsView(
+                            df_dataset=dataset_split_df.loc[
+                                dataset_split_df[f"fold_{fold+1}"] == "training"
+                            ].reset_index(),
+                            nbr_batches_per_epoch=int(
+                                len(files_for_training)
+                                / config["dataloader_settings"]["batch_size"]
+                            ),
+                            nbr_samples_per_batch=config["dataloader_settings"][
+                                "batch_size"
+                            ],
+                        )
                     )
-                    logger.info(f'Using custom batch sampler (views as different slices from the same subject).')
+                    logger.info(
+                        f"Using custom batch sampler (views as different slices from the same subject)."
+                    )
 
             training_dataloader = dataset_utilities.CustomDataset(
                 train_sample_paths=files_for_training,
@@ -319,8 +328,12 @@ def run_SimCLR_training(config: dict) -> None:
                 test_sample_paths=files_for_testing,
                 batch_size=config["dataloader_settings"]["batch_size"],
                 num_workers=config["dataloader_settings"]["nbr_workers"],
-                preprocess=dataset_utilities.ContrastiveTransformations(contrastive_transforms, n_views=2),
-                transforms=dataset_utilities.ContrastiveTransformations(contrastive_transforms, n_views=2),
+                preprocess=dataset_utilities.ContrastiveTransformations(
+                    contrastive_transforms, n_views=2
+                ),
+                transforms=dataset_utilities.ContrastiveTransformations(
+                    contrastive_transforms, n_views=2
+                ),
                 training_batch_sampler=training_batch_sampler,
             )
             # get class weights
@@ -355,7 +368,7 @@ def run_SimCLR_training(config: dict) -> None:
             # save model architecture to file
             old_stdout = sys.stdout
             try:
-                if config["model_settings"]['model_version'].lower() != 'vit':
+                if "vit" not in config["model_settings"]["model_version"].lower():
                     logger.info("Saving model architecture to file...")
                     MODEL_SUMMARY_LOG_FILE = open(
                         os.path.join(save_path, "model_architecture.log"), "w"
@@ -410,6 +423,7 @@ def run_SimCLR_training(config: dict) -> None:
             logger.info("Saving last model...")
             torch.save(model, os.path.join(save_path, f"TB_fold_{fold+1}", "last.pt"))
 
+
 # %%
 @hydra.main(version_base=None, config_path="conf", config_name="SimCLR_config")
 def main(config: DictConfig):
@@ -417,11 +431,11 @@ def main(config: DictConfig):
     set_up(config)
 
     # take out configurations for the SimCLR training and put all into a dictionary
-    SimCLR_conf = dict(config['SimCLR'])
-    SimCLR_conf['working_dir'] = config['working_dir']
-    SimCLR_conf['dataset'] = config['dataset']
-    SimCLR_conf['debugging_settings'] = config['debugging_settings']
-    SimCLR_conf['logging_settings'] = config['logging_settings']
+    SimCLR_conf = dict(config["SimCLR"])
+    SimCLR_conf["working_dir"] = config["working_dir"]
+    SimCLR_conf["dataset"] = config["dataset"]
+    SimCLR_conf["debugging_settings"] = config["debugging_settings"]
+    SimCLR_conf["logging_settings"] = config["logging_settings"]
 
     # run SimCLR training
     run_SimCLR_training(SimCLR_conf)

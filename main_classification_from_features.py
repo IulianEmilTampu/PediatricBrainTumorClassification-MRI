@@ -33,6 +33,8 @@ from torch.utils.data import DataLoader, Dataset
 import importlib
 from scipy.special import softmax
 
+from omegaconf import OmegaConf
+
 import dataset_utilities
 import model_bucket_CBTN_v1
 from copy import deepcopy
@@ -254,6 +256,12 @@ def plot_contours(ax, clf, xx, yy, **params):
     return out
 
 
+def get_age_from_file_name(file_name):
+    return int(
+        os.path.basename(file_name).split("___")[3].split("_")[0].replace("d", "")
+    )
+
+
 # %% SOME SETTINGS
 PCA_NBR_COMPONENTS = 2
 names = [
@@ -279,9 +287,11 @@ classifiers = [
     QDA(),
 ]
 
+USE_AGE = True
+
 
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231130"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -291,7 +301,7 @@ for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
 print(f"Found {len(models_to_evaluate)} to work on.")
 
 # models_to_evaluate = [
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231127/ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t094039/REPETITION_1"
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231129/ResNet50_pretrained_True_frozen_True_1.0_LR_1e-06_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t111416/REPETITION_2"
 # ]
 
 for idy, model_path in enumerate(models_to_evaluate):
@@ -356,6 +366,21 @@ for idy, model_path in enumerate(models_to_evaluate):
 
     print(target_class_to_one_hot_mapping)
 
+    # add age infromation for all the files in the dataset
+    dataset_split["age"] = [
+        get_age_from_file_name(f) for f in list(dataset_split["file_path"])
+    ]
+
+    # load hydra configuration to get normalization parameters
+    training_config = dict(
+        OmegaConf.load(
+            os.path.join(
+                MODEL_INFO["path"],
+                "hydra_config.yaml",
+            )
+        )
+    )
+
     # loop through all the available folds
     for fold_idx, fold in enumerate(
         glob.glob(os.path.join(MODEL_INFO["path"], "TB_fold*", ""))
@@ -412,22 +437,23 @@ for idy, model_path in enumerate(models_to_evaluate):
             )
         ]
 
-        img_mean = [0.5] * 3
-        img_std = [0.5] * 3
         preprocess = T.Compose(
             [
-                T.Resize(size=(224, 224), antialias=True),
+                T.Resize(
+                    size=training_config["dataloader_settings"]["input_size"],
+                    antialias=True,
+                ),
                 T.ToTensor(),
                 T.Normalize(
-                    mean=img_mean,
-                    std=img_std,
+                    mean=training_config["dataloader_settings"]["img_mean"],
+                    std=training_config["dataloader_settings"]["img_std"],
                 ),
             ],
         )
         transforms = T.Compose(
             [
                 T.RandomResizedCrop(
-                    size=(224, 224),
+                    size=training_config["dataloader_settings"]["input_size"],
                     scale=(0.6, 1.5),
                     ratio=(0.75, 1.33),
                     antialias=True,
@@ -449,8 +475,8 @@ for idy, model_path in enumerate(models_to_evaluate):
                 ),
                 T.ToTensor(),
                 T.Normalize(
-                    mean=img_mean,
-                    std=img_std,
+                    mean=training_config["dataloader_settings"]["img_mean"],
+                    std=training_config["dataloader_settings"]["img_std"],
                 ),
             ],
         )
@@ -462,6 +488,8 @@ for idy, model_path in enumerate(models_to_evaluate):
                 transform=preprocess,
                 labels=training_labels,
                 return_file_path=False,
+                return_age=False,
+                # ages=list(training_files_for_inference["age"])
             ),
             num_workers=0,
             batch_size=32,

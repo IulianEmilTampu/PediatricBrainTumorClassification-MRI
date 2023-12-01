@@ -5,7 +5,7 @@ defaults:
 working_dir: ${hydra:runtime.cwd}
 
 dataloader_settings:
-  batch_size: 32
+  batch_size: 128
   augmentation: True
   nbr_workers: 15
   class_stratification: True
@@ -14,9 +14,11 @@ dataloader_settings:
   randomize_subject_labels: False
   randomize_slice_labels : False
   select_slices_in_range : null
-  use_one_slice_per_subject_within_epoch: True
+  use_one_slice_per_subject_within_epoch: False
   img_mean: # there are just to save the standardization values
   img_std: # there are just to save the standardization values
+  use_age: false
+  normalize_age: true
 
 
 augmentation_settings:
@@ -27,19 +29,21 @@ augmentation_settings:
   hue: 0.1
 
 model_settings:
-  use_SimCLR_model: False
-  SimCLR_model_setitngs:
-    model_path: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/SimCLR_TESTs_20231120/SimCLR_ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_t172411/REPETITION_1/TB_fold_1/last.pt'
-  model_version: ResNet50 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
+  use_SimCLR_pretrained_model: True
+  SimCLR_prettrained_model_setitngs:
+    model_path: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/SimCLR_TESTs_20231130/SimCLR_ViT_b_16_pretrained_True_frozen_True_0_LR_1e-05_BATCH_64_TrivialAug_True_t145634'
+    pretraining_dataset: cbtn
+  model_version: ViT_b_16 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
   pre_trained: True
   freeze_weights: True
-  percentage_freeze_weights: 0.5
+  percentage_freeze_weights: 0
   mlp_nodes: []
+  age_encoder_mlp_nodes: []
 
 training_settings:
   epochs: 500
   patience: 20
-  learning_rate: 0.00001
+  learning_rate: 0.000005
   optimizer : adam # adamw, sgd, adam
   scheduler : exponential # linear_decay, cyclical, reduce_on_plateau, static
   use_look_ahead_wrapper : False
@@ -50,7 +54,7 @@ training_settings:
   run_testing: False # set to true only when model hiperparameters are tuned to get the final evaluation
   
 debugging_settings:
-  dataset_fraction: 1.0
+  dataset_fraction: 1
 
 logging_settings:
   checkpoint_path: ${hydra:runtime.cwd}/logging
@@ -58,4 +62,4 @@ logging_settings:
   start_time: None
 
 resources:
-  gpu_nbr: 3
+  gpu_nbr: 0

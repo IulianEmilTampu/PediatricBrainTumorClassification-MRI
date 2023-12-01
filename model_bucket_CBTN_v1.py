@@ -34,18 +34,6 @@ def find_nearest(array, value):
     return array[idx]
 
 
-# %% GENERAL RESNET MODEL
-def conv_block(in_channels, out_channels, pool=False):
-    layers = [
-        nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
-        nn.BatchNorm2d(out_channels),
-        nn.ReLU(inplace=True),
-    ]
-    if pool:
-        layers.append(nn.MaxPool2d(2))
-    return nn.Sequential(*layers)
-
-
 def make_classification_mpl(
     in_features: int,
     mpl_nodes: list,
@@ -76,6 +64,223 @@ def make_classification_mpl(
     classification_layers.append(torch.nn.Linear(in_features, nbr_classes))
 
     return classification_layers
+
+
+def model_feezer(model, version: str, percentage_weights_to_freeze: float = 0.0):
+    """
+    Utility that freezes the selected percentage of the model.
+    This works on:
+        - torchvision.models.resnet.ResNet models (version=resnet50, resnet18)
+        - ResNet9 (implemented below)
+        - torchvision.models.vision_transformer.VisionTransformer (version=vit_b_16, vit_b_32)
+
+    For ResNet models we use a predefined relation between the percentage to freeze and the children of the models.
+    For the ViT models, we use the number of encoders as reference.
+
+    ResNet50 -> it has 9 children in the model architecture.
+    - Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
+    - Childrens 4 (64 -> 256, 10 convs), 5 (256 -> 512, 10 convs), 6 (512 -> 1024, 19 convs) and 7 (1024 -> 2048, 10 convs) are Sequentials making up most of the model.
+    - Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
+
+    This is the definition of what is frozen when setting PERCENTAGE_FROZEN
+    - PERCENTAGE_FROZEN = 1: all the model is frozen
+    - PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
+    - PERCENTAGE_FROZEN = 0.40: children 0 to 5 (7, 6 are training)
+    - PERCENTAGE_FROZEN = 0.20.: children 0 to 4 (7, 6, 5 are training)
+    - PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
+    - PERCENTAGE_FROZEN = 0.0: all the model if training
+
+
+    ResNet18 -> it has 9 children in the model architecture.
+    - Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
+    - Childrens 4 (64 -> 64, 4 convs), 5 (64 -> 128, 5 convs), 6 (128 -> 256, 5 convs) and 7 (256 -> 512, 5 convs) are Sequentials making up most of the model.
+    - Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
+
+    This is the definition of what is frozen when setting PERCENTAGE_FROZEN
+    - PERCENTAGE_FROZEN = 1: all the model is frozen
+    - PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
+    - PERCENTAGE_FROZEN = 0.60: children 0 to 5 (7, 6 are training)
+    - PERCENTAGE_FROZEN = 0.40.: children 0 to 4 (7, 6, 5 are training)
+    - PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
+    - PERCENTAGE_FROZEN = 0.0: all the model if training
+
+    ResNet9 -> it has 6 children in the model architecture. (https://github.com/Moddy2024/ResNet-9/tree/main)
+    - Children 0 (conv, BatchNorm, ReLU) brings the input from 3 channels to 64 channels
+    - Children 1 (conv, BatchNorm, ReLU, MaxPool) 64 -> 128
+    - Children 2 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 128 -> 128
+    - Children 3 (conv, BatchNorm, ReLU, MaxPool) 128 -> 256
+    - Children 4 (conv, BatchNorm, ReLU, MaxPool) 256 -> 512
+    - Children 5 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 512 -> 512
+    - Children 6 (GlobalAveragePool, Flatten, Dropout, Dense) 512 -> classes (this is replaced by the new classification head)
+
+    This is the definition of what is frozen when setting PERCENTAGE_FROZEN
+    - PERCENTAGE_FROZEN = 1: all the model is frozen
+    - PERCENTAGE_FROZEN = 0.80: children 0 to 4 (5 is training)
+    - PERCENTAGE_FROZEN = 0.60: children 0 to 3 (5, 4 are training)
+    - PERCENTAGE_FROZEN = 0.40.: children 0 to 2 (5, 4, 3 are training)
+    - PERCENTAGE_FROZEN = 0.20.: children 0 to 1 (5, 4, 3, 2 are training)
+    - PERCENTAGE_FROZEN = 0.05: children 0 (5, 4, 3, 2, 1 are training)
+    - PERCENTAGE_FROZEN = 0.0: all the model if training
+
+    ViT vit_b_N - > it has 3 children of which the last is the classification head and child 1 is the encoder.
+    The encoder has 3 children of which the second is a Sequential with 12 EncoderBlocks (this can be accessed using len(net.encoder.layers))
+    Here the fraction of layers to be frozen depends on the length of the Sequential layer in the model encoder.
+    So, if there are 12 encoding blocks, a fraction of 0.7 will freeze int(12 * 0.7) encoding layers.
+
+    """
+    # define model children to percentage to freeze dictionary ()
+    resnet_model_children_to_freeze = {
+        "resnet50": {
+            1.0: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+                "string_to_print": "Freezing all the model (children 0 to 8).",
+            },
+            0.8: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5, 6],
+                "string_to_print": "Freezing children 0 to 6 (7 is training).",
+            },
+            0.4: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5],
+                "string_to_print": "Freezing children 0 to 5 (7, 6 are training)",
+            },
+            0.20: {
+                "children_to_freeze": [0, 1, 2, 3, 4],
+                "string_to_print": "Freezing children 0 to 4 (7, 6, 5 are training)",
+            },
+            0.05: {
+                "children_to_freeze": [0, 1, 2, 3],
+                "string_to_print": "Freezing children 0 to 3 (7, 6, 5, 4 are training)",
+            },
+            0.00: {
+                "children_to_freeze": [],
+                "string_to_print": "All the model is training.",
+            },
+        },
+        "resnet18": {
+            1.0: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5, 6, 7, 8],
+                "string_to_print": "Freezing all the model (children 0 to 8).",
+            },
+            0.8: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5, 6],
+                "string_to_print": "Freezing children 0 to 6 (7 is training).",
+            },
+            0.6: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5],
+                "string_to_print": "Freezing children 0 to 5 (7, 6 are training)",
+            },
+            0.4: {
+                "children_to_freeze": [0, 1, 2, 3, 4],
+                "string_to_print": "Freezing children 0 to 4 (7, 6, 5 are training)",
+            },
+            0.05: {
+                "children_to_freeze": [0, 1, 2, 3],
+                "string_to_print": "Freezing children 0 to 3 (7, 6, 5, 4 are training)",
+            },
+            0.00: {
+                "children_to_freeze": [],
+                "string_to_print": "All the model is training.",
+            },
+        },
+        "resnet9": {
+            1.0: {
+                "children_to_freeze": [0, 1, 2, 3, 4, 5],
+                "string_to_print": "Freezing all the model (children 0 to 6).",
+            },
+            0.8: {
+                "children_to_freeze": [0, 1, 2, 3, 4],
+                "string_to_print": "Freezing children 0 to 4 (5 is training).",
+            },
+            0.6: {
+                "children_to_freeze": [0, 1, 2, 3],
+                "string_to_print": "Freezing children 0 to 3 (5, 4 are training)",
+            },
+            0.4: {
+                "children_to_freeze": [0, 1, 2],
+                "string_to_print": "Freezing children 0 to 2 (5, 4, 3 are training)",
+            },
+            0.2: {
+                "children_to_freeze": [0, 1],
+                "string_to_print": "Freezing children 0 to 1 (5, 4, 3, 2 are training)",
+            },
+            0.05: {
+                "children_to_freeze": [0],
+                "string_to_print": "Freezing children 0 (5, 4, 3, 2, 1 are training)",
+            },
+            0.00: {
+                "children_to_freeze": [],
+                "string_to_print": "All the model is training.",
+            },
+        },
+    }
+
+    # freeze model
+    if isinstance(model, (torchvision.models.resnet.ResNet)):
+        # check which version
+        if any([version == v for v in ["resnet50", "resne18", "resne9"]]):
+            # fix the freeze_percentage to be the closest to the allowed ones
+            percentage_weights_to_freeze = find_nearest(
+                list(resnet_model_children_to_freeze[version].keys()),
+                percentage_weights_to_freeze,
+            )
+
+            # freeze model using freeze_percentage
+            child_idx_for_summary = []
+            for idx, child in enumerate(model.children()):
+                # freeze if this children is in the list of the children to freez for this percentage
+                if (
+                    idx
+                    in resnet_model_children_to_freeze[version][
+                        percentage_weights_to_freeze
+                    ]["children_to_freeze"]
+                ):
+                    for param in child.parameters():
+                        param.requires_grad = False
+                    child_idx_for_summary.append(idx)
+
+            # print status (here print both the automatic and the default string to check if all is good)
+            print(
+                f'({percentage_weights_to_freeze}) {resnet_model_children_to_freeze[version][percentage_weights_to_freeze]["string_to_print"]}'
+            )
+            print(
+                f"({percentage_weights_to_freeze}) (Automatic print): Freezing children {child_idx_for_summary}"
+            )
+        else:
+            raise ValueError(
+                f"The ResNet model set for model freezing is not among the ones supported (resnet50, resnet18, resnet9). Given {version}."
+            )
+    elif isinstance(model, torchvision.models.vision_transformer.VisionTransformer):
+        print(f"{type(model)}")
+        if any([version == v for v in ["vit_b_16", "vit_b_32"]]):
+            # get the number of encoder layers to freeze
+            nbr_enc_layer_to_freeze = int(
+                len(model.encoder.layers) * percentage_weights_to_freeze
+            )
+            # freeze model
+            for nbr_enc_layer in range(nbr_enc_layer_to_freeze):
+                for param in model.encoder.layers[nbr_enc_layer].parameters():
+                    param.requires_grad = False
+            # print status
+            print(
+                f"({percentage_weights_to_freeze}) (Automatic print): Freezing {nbr_enc_layer_to_freeze} encoding blocks out of {len(model.encoder.layers)}"
+            )
+    else:
+        print(f"{type(model)}")
+        raise ValueError(
+            f"The model type is not among the one supported. Given {type(model)}"
+        )
+
+
+# %% GENERAL RESNET MODEL
+def conv_block(in_channels, out_channels, pool=False):
+    layers = [
+        nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+        nn.BatchNorm2d(out_channels),
+        nn.ReLU(inplace=True),
+    ]
+    if pool:
+        layers.append(nn.MaxPool2d(2))
+    return nn.Sequential(*layers)
 
 
 class ResNet9(nn.Module):
@@ -150,116 +355,10 @@ class ResNets(torch.nn.Module):
 
         # ## freeze parts of the model as specified
         if pretrained:
-            model_children_to_freeze = {
-                "resnet50": {
-                    1.0: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-                        "string_to_print": "Freezing all the model (children 0 to 8).",
-                    },
-                    0.8: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5, 6],
-                        "string_to_print": "Freezing children 0 to 6 (7 is training).",
-                    },
-                    0.4: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5],
-                        "string_to_print": "Freezing children 0 to 5 (7, 6 are training)",
-                    },
-                    0.20: {
-                        "children_to_freeze": [0, 1, 2, 3, 4],
-                        "string_to_print": "Freezing children 0 to 4 (7, 6, 5 are training)",
-                    },
-                    0.05: {
-                        "children_to_freeze": [0, 1, 2, 3],
-                        "string_to_print": "Freezing children 0 to 3 (7, 6, 5, 4 are training)",
-                    },
-                    0.00: {
-                        "children_to_freeze": [],
-                        "string_to_print": "All the model is training.",
-                    },
-                },
-                "resnet18": {
-                    1.0: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5, 6, 7, 8],
-                        "string_to_print": "Freezing all the model (children 0 to 8).",
-                    },
-                    0.8: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5, 6],
-                        "string_to_print": "Freezing children 0 to 6 (7 is training).",
-                    },
-                    0.6: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5],
-                        "string_to_print": "Freezing children 0 to 5 (7, 6 are training)",
-                    },
-                    0.4: {
-                        "children_to_freeze": [0, 1, 2, 3, 4],
-                        "string_to_print": "Freezing children 0 to 4 (7, 6, 5 are training)",
-                    },
-                    0.05: {
-                        "children_to_freeze": [0, 1, 2, 3],
-                        "string_to_print": "Freezing children 0 to 3 (7, 6, 5, 4 are training)",
-                    },
-                    0.00: {
-                        "children_to_freeze": [],
-                        "string_to_print": "All the model is training.",
-                    },
-                },
-                "resnet9": {
-                    1.0: {
-                        "children_to_freeze": [0, 1, 2, 3, 4, 5],
-                        "string_to_print": "Freezing all the model (children 0 to 6).",
-                    },
-                    0.8: {
-                        "children_to_freeze": [0, 1, 2, 3, 4],
-                        "string_to_print": "Freezing children 0 to 4 (5 is training).",
-                    },
-                    0.6: {
-                        "children_to_freeze": [0, 1, 2, 3],
-                        "string_to_print": "Freezing children 0 to 3 (5, 4 are training)",
-                    },
-                    0.4: {
-                        "children_to_freeze": [0, 1, 2],
-                        "string_to_print": "Freezing children 0 to 2 (5, 4, 3 are training)",
-                    },
-                    0.2: {
-                        "children_to_freeze": [0, 1],
-                        "string_to_print": "Freezing children 0 to 1 (5, 4, 3, 2 are training)",
-                    },
-                    0.05: {
-                        "children_to_freeze": [0],
-                        "string_to_print": "Freezing children 0 (5, 4, 3, 2, 1 are training)",
-                    },
-                    0.00: {
-                        "children_to_freeze": [],
-                        "string_to_print": "All the model is training.",
-                    },
-                },
-            }
-
-            # fix the freeze_percentage to be the closest to the allowed ones
-            freeze_percentage = find_nearest(
-                list(model_children_to_freeze[version].keys()), freeze_percentage
-            )
-
-            # freeze model using freeze_percentage
-            child_idx_for_summary = []
-            for idx, child in enumerate(self.model.children()):
-                # freeze if this children is in the list of the children to freez for this percentage
-                if (
-                    idx
-                    in model_children_to_freeze[version][freeze_percentage][
-                        "children_to_freeze"
-                    ]
-                ):
-                    for param in child.parameters():
-                        param.requires_grad = False
-                    child_idx_for_summary.append(idx)
-
-            # print status (here print both the automatic and the default string to check if all is good)
-            print(
-                f'({freeze_percentage}) {model_children_to_freeze[version][freeze_percentage]["string_to_print"]}'
-            )
-            print(
-                f"({freeze_percentage}) (Automatic print): Freezing children {child_idx_for_summary}"
+            model_feezer(
+                model=self.model,
+                version=version,
+                percentage_weights_to_freeze=freeze_percentage,
             )
 
         # build classifier
@@ -275,7 +374,7 @@ class ResNets(torch.nn.Module):
             self.model.fc = make_classification_mpl(
                 in_features=self.model.fc.in_features,
                 mpl_nodes=self.mpl_nodes,
-                dropout_rate=self.dropout_rate,
+                dropout_rate=[],
                 nbr_classes=self.nbr_classes,
             )
 
@@ -647,17 +746,10 @@ class ViTs(torch.nn.Module):
             )
 
         if pretrained:
-            # get the number of encoder layers to freeze
-            nbr_enc_layer_to_freeze = int(
-                len(self.model.encoder.layers) * freeze_percentage
-            )
-            # freeze model
-            for nbr_enc_layer in range(nbr_enc_layer_to_freeze):
-                for param in self.model.encoder.layers[nbr_enc_layer].parameters():
-                    param.requires_grad = False
-            # print status
-            print(
-                f"({freeze_percentage}) (Automatic print): Freezing {nbr_enc_layer_to_freeze} encoding blocks out of {len(self.model.encoder.layers)}"
+            model_feezer(
+                model=self.model,
+                version=version,
+                percentage_weights_to_freeze=freeze_percentage,
             )
 
         # adapt the classification head to the nunber of classification tasks
@@ -671,8 +763,9 @@ class ViTs(torch.nn.Module):
 class ClassifierFromSimCLR(torch.nn.Module):
     def __init__(
         self,
-        SimCLR_model_path,
-        nbr_classes,
+        SimCLR_model_path: str,
+        nbr_classes: int,
+        version: str = "resnet50",
         freeze_percentage: float = 1.0,
         mpl_nodes: Union[list, tuple] = (1024),
         dropout_rate: Union[list, tuple, float] = 0.2,
@@ -694,12 +787,17 @@ class ClassifierFromSimCLR(torch.nn.Module):
         self.model = torch.load(self.SimCLR_model_path)
         self.model = self.model.convnet
 
-        if self.freeze_percentage == 1:
-            # freeze the feature extractor
-            for idx, child in enumerate(self.model.children()):
-                # freeze if this children is in the list of the children to freez for this percentage
-                for param in child.parameters():
-                    param.requires_grad = False
+        if float(self.freeze_percentage) != 0.0:
+            # # freeze the feature extractor
+            # for idx, child in enumerate(self.model.children()):
+            #     # freeze if this children is in the list of the children to freez for this percentage
+            #     for param in child.parameters():
+            #         param.requires_grad = False
+            model_feezer(
+                model=self.model,
+                version=version,
+                percentage_weights_to_freeze=freeze_percentage,
+            )
 
         # build classifier head
         if isinstance(self.dropout_rate, float):
@@ -710,12 +808,22 @@ class ClassifierFromSimCLR(torch.nn.Module):
             ), f"Single modality classification model build: the number of dropout rates and the number of mpl layers does not match. Given {len(dropout_rate)} and {len(nodes_in_mpl)}"
             self.dropout_rate = self.dropout_rate
 
-        self.model.fc = make_classification_mpl(
-            in_features=self.model.fc[0][0].in_features,
-            mpl_nodes=self.mpl_nodes,
-            dropout_rate=self.dropout_rate,
-            nbr_classes=self.nbr_classes,
-        )
+        if isinstance(
+            self.model, (torchvision.models.vision_transformer.VisionTransformer)
+        ):
+            self.model.heads = make_classification_mpl(
+                in_features=self.model.heads[0].in_features,
+                mpl_nodes=self.mpl_nodes,
+                dropout_rate=self.dropout_rate,
+                nbr_classes=self.nbr_classes,
+            )
+        else:
+            self.model.fc = make_classification_mpl(
+                in_features=self.model.fc[0][0].in_features,
+                mpl_nodes=self.mpl_nodes,
+                dropout_rate=self.dropout_rate,
+                nbr_classes=self.nbr_classes,
+            )
 
     def forward(self, x):
         return self.model(x)
@@ -742,6 +850,8 @@ class LitModelWrapper(pl.LightningModule):
         use_SimCLR_pretrained_model: bool = False,
         SimCLR_model_path: str = None,
         labels_as_string: Union[list, tuple] = None,
+        use_age: bool = False,
+        age_encoder_mlp_nodes: Union[list, tuple] = None,
     ):
         super(LitModelWrapper, self).__init__()
 
@@ -755,6 +865,8 @@ class LitModelWrapper(pl.LightningModule):
         self.use_regularization = use_regularization
         self.version = version
         self.mpl_nodes = mpl_nodes
+        self.use_age = use_age
+        self.age_encoder_mlp_nodes = age_encoder_mlp_nodes
 
         # define model based on the version
         if use_SimCLR_pretrained_model:
@@ -775,7 +887,6 @@ class LitModelWrapper(pl.LightningModule):
                     version=version,
                     pretrained=pretrained,
                     freeze_percentage=freeze_percentage,
-                    mpl_nodes=mpl_nodes,
                 )
             elif version == "2dsdm4":
                 self.model = CustomModel(
@@ -806,6 +917,29 @@ class LitModelWrapper(pl.LightningModule):
                     f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
                 )
 
+        # add age encoder if needed
+        if self.use_age:
+            # fix drop_out
+            age_dropout_rate = 0.2
+            age_dropout_rate = [
+                age_dropout_rate for i in range(len(self.age_encoder_mlp_nodes))
+            ]
+
+            # build age encoder layers.
+            self.age_encoder = make_classification_mpl(
+                in_features=1,
+                mpl_nodes=self.age_encoder_mlp_nodes,
+                dropout_rate=age_dropout_rate,
+                nbr_classes=self.nbr_classes,
+            )
+
+            # add a dense layer that takes
+            #   - the concatenated image features
+            #   - the encoded age and performs the
+            # and brings them to the number of classificatio targets.
+
+            self.fusion_layer = torch.nn.Linear(self.nbr_classes * 2, self.nbr_classes)
+
         # check class weights
         if class_weights is not None:
             if len(class_weights) != nbr_classes:
@@ -823,9 +957,9 @@ class LitModelWrapper(pl.LightningModule):
         else:
             self.loss_fn = nn.CrossEntropyLoss(weight=self.class_weights)
 
-        self.save_hyperparameters(
-            logger=True,
-        )
+        # self.save_hyperparameters(
+        #     logger=True,
+        # )
 
         # what to log during training, validation and testing
         metrics = torchmetrics.MetricCollection(
@@ -863,7 +997,27 @@ class LitModelWrapper(pl.LightningModule):
         self.image_std = torch.Tensor(image_std).unsqueeze(-1).unsqueeze(-1)
 
     def forward(self, x):
-        return self.model(x)
+        if self.use_age:
+            # encode image
+            image_encoding = self.model(x[0])
+            # encode_age
+            age_encoding = self.age_encoder(x[1])
+            # concatenate and throught the fusion layer
+            return self.fusion_layer(
+                torch.concat((image_encoding, age_encoding), dim=1)
+            )
+        else:
+            return self.model(x)
+
+    def prepare_batch(self, batch):
+        if self.use_age:
+            # print(f"prepare batch: image {batch[0].shape}")
+            # print(f"prepare batch: age {batch[2].shape}")
+            # print(f"prepare batch: label {batch[1].shape}")
+            # unpack the image, the age and the label
+            return (batch[0], batch[2]), batch[1]
+        else:
+            return batch[0], batch[1]
 
     def configure_optimizers(self):
         # set optimizer and scheduler based on settings
@@ -946,8 +1100,8 @@ class LitModelWrapper(pl.LightningModule):
                 )
 
     def training_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self.model(x)
+        x, y = self.prepare_batch(batch)
+        preds = self.forward(x)
         loss = self.loss_fn(preds, y)
 
         # compute metrics
@@ -964,6 +1118,8 @@ class LitModelWrapper(pl.LightningModule):
             self.log_weights(step=self.trainer.global_step)
 
         # save one batch of images
+        if self.use_age:
+            x = x[0]
         if len(self.training_step_img) == 0:
             self.training_step_img.append(x.to("cpu"))
 
@@ -974,8 +1130,12 @@ class LitModelWrapper(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self.model(x)
+        x, y = self.prepare_batch(batch)
+        preds = self.forward(x)
+        # print(f"validation step: image {x[0].shape}")
+        # print(f"validation step: age {x[1].shape}")
+        # print(f"validation step: label {y.shape}")
+        # print(f"validation step: pred {preds.shape}")
         loss = self.loss_fn(preds, y)
 
         # compute metrics
@@ -988,6 +1148,8 @@ class LitModelWrapper(pl.LightningModule):
         )
 
         # save images for tensorboard saving
+        if self.use_age:
+            x = x[0]
         if len(self.validation_step_img) == 0:
             self.validation_step_img.append(x.to("cpu"))
         # save ground truth and predicstions for confusion matrix plot
@@ -995,8 +1157,8 @@ class LitModelWrapper(pl.LightningModule):
         self.validation_step_ys.append(y)
 
     def test_step(self, batch, batch_idx):
-        x, y = batch
-        preds = self.model(x)
+        x, y = prepare_batch(batch)
+        preds = self.forward(x)
         loss = self.loss_fn(preds, y)
 
         # compute metrics
@@ -1013,7 +1175,8 @@ class LitModelWrapper(pl.LightningModule):
         self.test_step_ys.append(y)
 
         # save images for tensorboard saving
-        # save one batch of images
+        if self.use_age:
+            x = x[0]
         if len(self.test_step_img) == 0:
             self.test_step_img.append(x.to("cpu"))
 
@@ -1181,8 +1344,6 @@ class LitModelWrapper(pl.LightningModule):
 
 
 # %% LiT WRAPPER FOR SimCLR training
-
-
 class SimCLRModelWrapper(pl.LightningModule):
     def __init__(
         self,
@@ -1235,17 +1396,25 @@ class SimCLRModelWrapper(pl.LightningModule):
                 pretrained=pretrained,
                 freeze_percentage=freeze_percentage,
             )
+            self.convnet = self.convnet.model
         else:
             raise ValueError(
                 f"The given model version is not implemented (yet). Given {version}.\nYou can add your model implementation in the model_bucket_CBTN_v1.py file and call it in the LitModeWrapper."
             )
 
         # The MLP for g(.) consists of Linear->ReLU->Linear
-        self.convnet.fc = nn.Sequential(
-            self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
-            nn.ReLU(inplace=True),
-            nn.Linear(4 * hidden_dim, hidden_dim),
-        )
+        if "vit" in version:
+            self.convnet.heads = nn.Sequential(
+                self.convnet.heads.head,  # Linear(ResNet output, 4*hidden_dim)
+                nn.ReLU(inplace=True),
+                nn.Linear(4 * hidden_dim, hidden_dim),
+            )
+        else:
+            self.convnet.fc = nn.Sequential(
+                self.convnet.fc,  # Linear(ResNet output, 4*hidden_dim)
+                nn.ReLU(inplace=True),
+                nn.Linear(4 * hidden_dim, hidden_dim),
+            )
 
         # for saving some training, validation, testing images
         self.validation_step_img = []

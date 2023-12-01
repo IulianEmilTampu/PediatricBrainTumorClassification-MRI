@@ -45,6 +45,28 @@ class AddGaussianNoise(object):
         )
 
 
+def print_summary_from_dataset_split(dataset_split_df):
+    # prints the number of training validation and testing files and subjects
+    # for each of the sets
+
+    # print test
+    df = dataset_split_df.loc[dataset_split_df["fold_1"] == "test"]
+    print(
+        f'{"Test set":9s}: {len(df):5d} files ({len(pd.unique(df.subject_IDs)):4d} unique subjects ({pd.unique(df.target)} {[len(pd.unique(df.loc[df.target == c].subject_IDs)) for c in list(pd.unique(df.target))]}))'
+    )
+
+    # print the different folds
+    fold_cols = [c for c in list(dataset_split_df.columns) if "fold_" in c]
+    fold_cols.sort()
+    for fold_col in fold_cols:
+        for set_name in ["training", "validation"]:
+            # print set
+            df = dataset_split_df.loc[dataset_split_df[fold_col] == set_name]
+            print(
+                f"[{fold_col.capitalize()}] {set_name.capitalize():11s}: {len(df):5d} files ({len(pd.unique(df.subject_IDs)):4d} unique subjects ({pd.unique(df.target)} {[len(pd.unique(df.loc[df.target == c].subject_IDs)) for c in list(pd.unique(df.target))]}))"
+            )
+
+
 def get_dataset_heuristics(dataset_name):
     """
     Utility that given the config dictionary returns the heuristics for:
@@ -60,7 +82,8 @@ def get_dataset_heuristics(dataset_name):
         heuristic_for_subject_ID_extraction,
         heuristic_for_class_extraction,
         heuristic_for_rlp_extraction,
-    ) = (None, None, None, None)
+        heuristic_for_age_extraction,
+    ) = (None, None, None, None, None)
 
     if "cbtn_tumor_detection" in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
@@ -73,6 +96,7 @@ def get_dataset_heuristics(dataset_name):
         heuristic_for_rlp_extraction = lambda x: float(
             os.path.basename(x).split("___")[5].split("_")[-1]
         )
+
     elif "cbtn_tumor_classification" in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
         heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split(
@@ -82,9 +106,13 @@ def get_dataset_heuristics(dataset_name):
         heuristic_for_rlp_extraction = lambda x: float(
             os.path.basename(x).split("___")[5].split("_")[-1]
         )
+        heuristic_for_age_extraction = lambda x: int(
+            os.path.basename(x).split("___")[3].split("_")[0].replace("d", "")
+        )
     # elif dataset_name.lower() == 'tcga_tumor_detection':
     #     heuristic_for_file_discovery = "*.png"
     #     heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[0]
+    #     heuristic_for_class_extraction = lambda x: os.path.basename(x).split("_")[1]
     elif "tcga_tumor_classification" in dataset_name.lower():
         heuristic_for_file_discovery = "*.png"
         heuristic_for_subject_ID_extraction = lambda x: os.path.basename(x).split("_")[
@@ -95,12 +123,12 @@ def get_dataset_heuristics(dataset_name):
         raise ValueError(
             f'The given dataset name does not macth any of the available dataset. Given {config["dataset"]["name"]}.\nIf needed, add the .yaml file for the dataset in the ~/conf/dataset folder and add here the heuristics needed.'
         )
-
     return (
         heuristic_for_file_discovery,
         heuristic_for_subject_ID_extraction,
         heuristic_for_class_extraction,
         heuristic_for_rlp_extraction,
+        heuristic_for_age_extraction,
     )
 
 
@@ -110,6 +138,7 @@ def _get_split(
     heuristic_for_subject_ID_extraction,
     heuristic_for_class_extraction,
     heuristic_for_relative_position_extraction=None,
+    heuristic_for_age_extraction=None,
     repetition_number=1,
     randomize_subject_labels: bool = False,
     randomize_slice_labels: bool = False,
@@ -132,6 +161,7 @@ def _get_split(
         heuristic_for_subject_ID_extraction,
         heuristic_for_class_extraction=None,
         heuristic_for_relative_position_extraction=None,
+        heuristic_for_age_extraction=None,
     ):
         # get all the files in the dataset_folder
         all_files = sorted(
@@ -155,6 +185,12 @@ def _get_split(
         else:
             per_file_rlp = None
 
+        # get age information
+        if heuristic_for_age_extraction:
+            per_file_age = [heuristic_for_age_extraction(str(f)) for f in all_files]
+        else:
+            per_file_age = None
+
         # build dataframe and return
         return pd.DataFrame(
             {
@@ -162,6 +198,7 @@ def _get_split(
                 "file_path": all_files,
                 "target": per_file_class,
                 "tumor_relative_position": per_file_rlp,
+                "age_in_days": per_file_age,
             }
         )
 
@@ -272,6 +309,7 @@ def _get_split(
         heuristic_for_subject_ID_extraction=heuristic_for_subject_ID_extraction,
         heuristic_for_class_extraction=heuristic_for_class_extraction,
         heuristic_for_relative_position_extraction=heuristic_for_relative_position_extraction,
+        heuristic_for_age_extraction=heuristic_for_age_extraction,
     )
 
     # trim based on requested classes
@@ -635,16 +673,26 @@ class PNGDatasetFromFolder(Dataset):
             label = self.labels[item_index]
 
         if self.return_age:
-            age = 0
+            age = self.ages[item_index]
 
         if self.return_file_path:
             item_path = item_path
 
-        # this is ugly, but it works when debugging
-        if any([self.return_age, self.return_file_path]):
-            return tensor_image, label, age, item_path
-        else:
-            return tensor_image, label
+        # tuple with the things to return (to handle if file path and age are requested)
+        # The order is tensor_image, label, age, item_path
+        aus_return = [tensor_image, label]
+        if self.return_age:
+            aus_return.append(torch.unsqueeze(torch.tensor(age), 0))
+        if self.return_file_path:
+            aus_return.append(item_path)
+
+        return tuple(aus_return)
+
+        # if all([self.return_age, self.return_file_path, self.labels]):
+        #     return tensor_image, label, age, item_path
+        # elif self.return_age
+        # else:
+        #     return tensor_image, label
 
 
 class CustomDataset(pl.LightningDataModule):
@@ -662,6 +710,10 @@ class CustomDataset(pl.LightningDataModule):
         validation_targets=None,
         test_targets=None,
         training_batch_sampler=None,
+        return_age: bool = False,
+        train_sample_age=None,
+        validation_sample_age=None,
+        test_sample_age=None,
     ):
         super().__init__()
         self.batch_size = batch_size
@@ -678,6 +730,10 @@ class CustomDataset(pl.LightningDataModule):
         self.num_workers = num_workers
         self.train_val_ratio = train_val_ratio
         self.return_classes = True if training_targets else False
+        self.return_age = return_age
+        self.train_sample_age = train_sample_age
+        self.validation_sample_age = validation_sample_age
+        self.test_sample_age = test_sample_age
         self.training_batch_sampler = training_batch_sampler
         # TODO make it work even when only train_sample_paths is given
 
@@ -731,11 +787,15 @@ class CustomDataset(pl.LightningDataModule):
             self.train_sample_paths,
             transform=self.transform,
             labels=self.train_per_sample_target_class,
+            return_age=self.return_age,
+            ages=self.train_sample_age,
         )
         self.validation_set = PNGDatasetFromFolder(
             self.validation_sample_paths,
             transform=self.preprocess,
             labels=self.validation_per_sample_target_class,
+            return_age=self.return_age,
+            ages=self.validation_sample_age,
         )
 
         if self.return_test_dataloader:
@@ -743,12 +803,17 @@ class CustomDataset(pl.LightningDataModule):
                 self.test_sample_paths,
                 transform=self.preprocess,
                 labels=self.test_per_sample_target_class,
+                return_age=self.return_age,
+                ages=self.test_sample_age,
             )
-    def return_class_to_onehot_encoding_dict(self,):
+
+    def return_class_to_onehot_encoding_dict(
+        self,
+    ):
         if self.return_classes:
             return self.target_class_to_one_hot_mapping
-        else: 
-            return None 
+        else:
+            return None
 
     def train_dataloader(self):
         if self.training_batch_sampler:
@@ -763,7 +828,7 @@ class CustomDataset(pl.LightningDataModule):
                 self.training_set,
                 self.batch_size,
                 num_workers=self.num_workers,
-                shuffle=False,
+                shuffle=True,
             )
 
     def val_dataloader(self):

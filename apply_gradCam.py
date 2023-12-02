@@ -9,12 +9,17 @@ import numpy as np
 import PIL
 import matplotlib.pyplot as plt
 import cv2
+import pathlib
+import importlib
+import copy
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset
+
+from omegaconf import DictConfig, OmegaConf
 
 import torchvision
 import torchvision.transforms as transforms
@@ -34,77 +39,9 @@ from pytorch_grad_cam.utils.image import show_cam_on_image
 
 # local imports
 import model_bucket_CBTN_v1
-
-# %% GET PATH TO MODEL TO PLOT
-FOLD_NAME = "fold_5"
-PATH_TO_MODEL_CKTP = "/flush/iulta54/P5-PedMRI_CBTN_v1/trained_model_archive/TESTs_20231106/ResNet18_pretrained_True_frozen_True_0.4_LR_0.0001_BATCH_64_AUGMENTATION_True_OPTIM_sgd_SCHEDULER_exponential_MLPNODES_512_t0928/REPETITION_1/TB_fold_5/last.pt"
-# MODEL_VERSION = os.path.basename(os.path.dirname(PATH_TO_MODEL_CKTP)).split("_")[0]
-PATH_TO_SPLIT_CSV = "/flush/iulta54/P5-PedMRI_CBTN_v1/trained_model_archive/TESTs_20231106/ResNet18_pretrained_True_frozen_True_0.4_LR_0.0001_BATCH_64_AUGMENTATION_True_OPTIM_sgd_SCHEDULER_exponential_MLPNODES_512_t0928/REPETITION_1/data_split_information.csv"
-CLASSES_TO_USE = ["ASTROCYTOMA", "EPENDYMOMA", "MEDULLOBLASTOMA"]
+import dataset_utilities
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-# %% # ########################################### GET TRAINING, VALIDATION AND TEST FILES
-print("Loading data...")
-dataset_split = pd.read_csv(PATH_TO_SPLIT_CSV)
-dataset_split = dataset_split.drop(columns=["level_0", "index"])
-
-training_files = list(
-    dataset_split.loc[
-        (dataset_split[FOLD_NAME] == "training")
-        & (dataset_split["target"].isin(CLASSES_TO_USE))
-    ]["file_path"]
-)
-validation_files = list(
-    dataset_split.loc[
-        (dataset_split[FOLD_NAME] == "validation")
-        & (dataset_split["target"].isin(CLASSES_TO_USE))
-    ]["file_path"]
-)
-test_files = list(
-    dataset_split.loc[
-        (dataset_split[FOLD_NAME] == "test")
-        & (dataset_split["target"].isin(CLASSES_TO_USE))
-    ]["file_path"]
-)
-
-print(f"Nbr. training files: {len(training_files)}")
-print(f"Nbr. validation file: {len(validation_files)}")
-print(f"Nbr. test file: {len(test_files)}")
-
-
-class PNGDatasetFromFolder(Dataset):
-    def __init__(
-        self,
-        item_list,
-        transform=None,
-        labels=None,
-    ):
-        super().__init__()
-        self.item_list = item_list
-        self.nbr_total_imgs = len(self.item_list)
-        self.transform = transform
-        self.labels = labels
-
-    def __len__(
-        self,
-    ):
-        return self.nbr_total_imgs
-
-    def __getitem__(self, item_index):
-        item_path = self.item_list[item_index]
-        image = PIL.Image.open(item_path).convert("RGB")
-        if self.transform:
-            image = self.transform(image)
-        else:
-            image = torchvision.transforms.functional.pil_to_tensor(image)
-
-        # return label as well
-        if self.labels:
-            label = self.labels[item_index]
-            return image, label
-        else:
-            return image, 0
 
 
 def seed_worker(worker_id):
@@ -113,26 +50,69 @@ def seed_worker(worker_id):
     random.seed(worker_seed)
 
 
-g = torch.Generator()
-g.manual_seed(0)
+def reshape_transform(tensor, height=14, width=14):
+    result = tensor[:, 1:, :].reshape(tensor.size(0), height, width, tensor.size(2))
+    # Bring the channels to the first dimension,
+    # like in CNNs.
+    result = result.transpose(2, 3).transpose(1, 2)
+    return result
 
+
+# %% GET PATH TO MODEL TO PLOT and some other settings
+PATH_TO_MODEL_CKTP = pathlib.Path(
+    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231125/ViT_b_16_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t034422/REPETITION_1/TB_fold_1/last.pt"
+)
+FOLD_NAME = PATH_TO_MODEL_CKTP.parts[-2].replace("TB_", "")
+MODEL_VERSION = PATH_TO_MODEL_CKTP.parts[-4].split("_")[0]
+PATH_TO_SPLIT_CSV = os.path.join(
+    os.path.dirname(os.path.dirname(PATH_TO_MODEL_CKTP)), "data_split_information.csv"
+)
+PATH_TO_YAML_CONFIG_FILE = os.path.join(
+    os.path.dirname(os.path.dirname(PATH_TO_MODEL_CKTP)), "hydra_config.yaml"
+)
+
+# load .yaml file as well
+training_config = OmegaConf.load(PATH_TO_YAML_CONFIG_FILE)
+CLASSES_TO_USE = training_config.dataset.classes_of_interest
+IMG_MEAN_NORM = training_config.dataloader_settings.img_mean
+IMG_STD_NORM = training_config.dataloader_settings.img_std
+
+# set which set to plot
+SETS_TO_PLOT = ["training", "validation"]
+USE_AUGMENTATION = True
+
+# %% LOAD MODEL
+net = torch.load(PATH_TO_MODEL_CKTP)
+if "vit" in MODEL_VERSION.lower():
+    net = net.model.model.to(device)
+else:
+    net = net.model.to(device)
+
+# %% LOOP THROUGH ALL THE SETS_TO_PLOT
+# load the datasetsplit .csv file
+importlib.reload(dataset_utilities)
+dataset_split = pd.read_csv(PATH_TO_SPLIT_CSV)
+try:
+    dataset_split = dataset_split.drop(columns=["level_0", "index"])
+except:
+    pass
+
+# define transforms
 train_transform = transforms.Compose(
     [
-        # transforms.RandomResizedCrop(224, scale=(0.6, 1.5), ratio=(0.75, 1.33)),
-        # transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(90),
-        # transforms.RandomApply(
-        #     [
-        #         transforms.ColorJitter(
-        #             brightness=0.5, contrast=0.5, saturation=0.5, hue=0.1
-        #         )
-        #     ],
-        #     p=0.5,
-        # ),
-        transforms.ToTensor(),
-        transforms.Normalize(
-            np.array([0.4451, 0.4262, 0.3959]), np.array([0.2411, 0.2403, 0.2466])
+        transforms.RandomResizedCrop(224, scale=(0.5, 1.5), ratio=(0.7, 1.33)),
+        transforms.RandomHorizontalFlip(),
+        transforms.RandomRotation(45),
+        transforms.RandomApply(
+            [
+                transforms.ColorJitter(
+                    brightness=0.5, contrast=0.5, saturation=0.5, hue=0.1
+                )
+            ],
+            p=0.5,
         ),
+        transforms.ToTensor(),
+        transforms.Normalize(np.array(IMG_MEAN_NORM), np.array(IMG_STD_NORM)),
     ]
 )
 
@@ -140,149 +120,142 @@ validation_transform = transforms.Compose(
     [
         transforms.CenterCrop(224),
         transforms.ToTensor(),
-        transforms.Normalize(
-            np.array([0.4451, 0.4262, 0.3959]), np.array([0.2411, 0.2403, 0.2466])
-        ),
+        transforms.Normalize(np.array(IMG_MEAN_NORM), np.array(IMG_STD_NORM)),
     ]
 )
 
-train_labels = list(
-    dataset_split.loc[
-        (dataset_split[FOLD_NAME] == "training")
+for set_to_plot in SETS_TO_PLOT:
+    print(f"Working on {set_to_plot} set ({MODEL_VERSION}, fold: {FOLD_NAME}).")
+    # create save folder in the model repetition folder
+    SAVE_PATH = pathlib.Path(
+        os.path.join(
+            os.path.dirname(os.path.dirname(PATH_TO_MODEL_CKTP)),
+            "GradCAMs",
+            set_to_plot,
+        )
+    )
+    SAVE_PATH.mkdir(parents=True, exist_ok=True)
+
+    # create datagenerator for teh given set
+    g = torch.Generator()
+    g.manual_seed(training_config.training_settings.random_state)
+
+    samples = dataset_split.loc[
+        (dataset_split[FOLD_NAME] == set_to_plot)
         & (dataset_split["target"].isin(CLASSES_TO_USE))
-    ]["target"]
-)
-unique_labels = list(dict.fromkeys(train_labels))
-unique_labels.sort()
+    ]
+    print(f"   Nbr. {set_to_plot} files: {len(samples)}")
 
-# training
-train_labels_numeric = [unique_labels.index(l) for l in train_labels]
-trainset = PNGDatasetFromFolder(
-    training_files,
-    transform=train_transform,
-    labels=train_labels_numeric,
-)
-trainloader = DataLoader(
-    trainset,
-    512,
-    num_workers=15,
-    shuffle=True,
-    worker_init_fn=seed_worker,
-    generator=g,
-)
-
-# validation
-validation_labels_numeric = [
-    unique_labels.index(l)
-    for l in list(
-        dataset_split.loc[
-            (dataset_split[FOLD_NAME] == "validation")
-            & (dataset_split["target"].isin(CLASSES_TO_USE))
-        ]["target"]
+    sample_dataloader = DataLoader(
+        dataset_utilities.PNGDatasetFromFolder(
+            list(samples["file_path"]),
+            transform=train_transform if USE_AUGMENTATION else validation_transform,
+            labels=dataset_utilities.str_class_to_numeric(
+                list(samples["target"]),
+                str_unique_classes=CLASSES_TO_USE,
+                one_hot=True,
+                as_torch_tensors=True,
+            ),
+        ),
+        64,
+        num_workers=15,
+        shuffle=True,
+        worker_init_fn=seed_worker,
+        generator=g,
     )
-]
-validationdataset = PNGDatasetFromFolder(
-    validation_files,
-    transform=train_transform,
-    labels=validation_labels_numeric,
-)
-validationloader = DataLoader(
-    validationdataset,
-    len(validation_files),
-    num_workers=15,
-    shuffle=False,
-    worker_init_fn=seed_worker,
-    generator=g,
-)
 
-# test
-test_labels_numeric = [
-    unique_labels.index(l)
-    for l in list(
-        dataset_split.loc[
-            (dataset_split[FOLD_NAME] == "test")
-            & (dataset_split["target"].isin(CLASSES_TO_USE))
-        ]["target"]
+    # ## APPLY GRADCAM
+    # define target layer
+    if "vit" in MODEL_VERSION.lower():
+        target_layers = [net.encoder.layers[-1].ln_1]
+        # target_layers = [net.encoder.ln]
+        use_reshape_transfor = True
+    else:
+        target_layers = [net.model.layer4[-1].conv3]
+        use_reshape_transfor = False
+    print(f"   Using {target_layers} as target layer")
+
+    # get batch from sample_dataloader
+    dataiter = iter(sample_dataloader)
+    images, labels = next(dataiter)
+    labels = torch.argmax(labels, axis=1).numpy()
+
+    # get model predictions on this batch and print MCC and accuracy
+    with torch.no_grad():
+        pred = net(images.to(device))
+        y_ = torch.argmax(pred, axis=1).to("cpu").numpy()
+
+    accuracy = np.sum(labels == y_) / labels.shape[0]
+    from sklearn.metrics import matthews_corrcoef
+
+    mcc = matthews_corrcoef(labels, y_)
+    print(
+        f"   Perfonace on a batch on {set_to_plot} set: MCC: {mcc:0.3f}, Accuracy: {accuracy:0.3f}"
     )
-]
 
-testdataset = PNGDatasetFromFolder(
-    test_files,
-    transform=validation_transform,
-    labels=test_labels_numeric,
-)
-testloader = DataLoader(
-    testdataset,
-    64,
-    num_workers=15,
-    shuffle=False,
-    worker_init_fn=seed_worker,
-    generator=g,
-)
-
-# %% LOAD MODEL
-net = torch.load(PATH_TO_MODEL_CKTP)
-net = net.model.to(device)
-# %% APPLY gradCAM
-
-target_layers = [net.model.layer4[-1].conv2]
-
-dataiter = iter(validationloader)
-images, labels = next(dataiter)
-
-with torch.no_grad():
-    pred = net(images.to(device))
-    y_ = torch.argmax(pred, axis=1)
-
-accuracy = np.sum(labels.numpy() == y_.to("cpu").numpy()) / labels.shape[0]
-from sklearn.metrics import matthews_corrcoef
-
-mcc = matthews_corrcoef(labels.numpy(), y_.to("cpu").numpy())
-print(f"{mcc}, {accuracy}")
-
-# save confusion matrix
-import torchmetrics
-import seaborn as sns
-
-confusion_matrix = torchmetrics.ConfusionMatrix(
-    task="multiclass", num_classes=3, threshold=0.05
-)
-confusion_matrix(torch.tensor(labels.numpy()), torch.tensor(y_.to("cpu").numpy()))
-confusion_matrix_computed = (
-    confusion_matrix.compute().detach().cpu().numpy().astype(int)
-)
-df_cm = pd.DataFrame(confusion_matrix_computed)
-fig = plt.figure(figsize=(10, 7))
-sns.heatmap(df_cm, annot=True, cmap="Blues", annot_kws={"size": 20})
-
-cam = GradCAM(model=net, target_layers=target_layers, use_cuda=True)
-targets = [
-    ClassifierOutputTarget(0),
-    ClassifierOutputTarget(1),
-    ClassifierOutputTarget(2),
-]
-
-# compute GradCAM for all the images in the batch
-grayscale_cam = cam(
-    input_tensor=images, targets=None, aug_smooth=False, eigen_smooth=False
-)
-# %%
-results = []
-for i in range(images.shape[0]):
-    rgb_img = np.transpose(images.numpy()[i], (1, 2, 0))
-    # un-normalize
-    rgb_img = rgb_img * np.array([0.2411, 0.2403, 0.2466]) + np.array(
-        [0.4451, 0.4262, 0.3959]
+    print("   Computing GradCAMs")
+    cam = EigenCAM(
+        model=net,
+        target_layers=target_layers,
+        use_cuda=True,
+        reshape_transform=reshape_transform if use_reshape_transfor else None,
     )
-    # clip [0,1]
-    rgb_img[rgb_img < 0] = 0
-    rgb_img[rgb_img > 1] = 1
-    visualization = show_cam_on_image(rgb_img, grayscale_cam[i, :], use_rgb=True)
-    results.append(torch.tensor(visualization.transpose(2, 0, 1)))
 
-fig = plt.figure(figsize=(30, 30))
-plt.imshow(torchvision.utils.make_grid(results).numpy().transpose(1, 2, 0))
-plt.colorbar()
-# plt.imshow(PIL.Image.fromarray(np.hstack(results)))
+    # compute GradCAM for all the images in the batch
+    grayscale_cam = cam(
+        input_tensor=images, targets=None, aug_smooth=False, eigen_smooth=False
+    )
+
+    # ## PLOT and SAVE gradcams
+    # here we save samples_per_image iamges at the time (forst row gray scale image and second row the gradcam)
+    samples_per_image = 8
+    index_start = range(0, images.shape[0], samples_per_image)
+    index_end = range(samples_per_image, images.shape[0] + 1, samples_per_image)
+
+    for idx_img, (idx_s, idx_e) in enumerate(zip(index_start, index_end)):
+        print(
+            f"   Saving figure {idx_img+1:4d}/{images.shape[0]//samples_per_image}\r",
+            end="",
+        )
+        # take out gray scale images and gradcam images
+        g_images = images[idx_s:idx_e, :, :]
+        c_iamges = grayscale_cam[idx_s:idx_e, :, :]
+
+        # build image
+        c_aus, vis_aus = [], []
+        for i in range(g_images.shape[0]):
+            g_images_rgb = np.transpose(g_images.numpy()[i], (1, 2, 0))
+            # un-normalize (undo T.Normalize)
+            g_images_rgb = g_images_rgb * np.array(IMG_MEAN_NORM) + np.array(
+                IMG_STD_NORM
+            )
+            # un-normalize (undo T.ToTensor)
+            g_images_rgb = (g_images_rgb - g_images_rgb.min()) / (
+                g_images_rgb.max() - g_images_rgb.min()
+            )
+
+            visualization = show_cam_on_image(g_images_rgb, c_iamges[i], use_rgb=True)
+            # save for making grid
+            c_aus.append(torch.tensor(g_images_rgb.transpose(2, 0, 1)))
+            vis_aus.append(torch.tensor((visualization / 255).transpose(2, 0, 1)))
+
+        fig = plt.figure(figsize=(30, 30))
+        c_aus.extend(vis_aus)
+        plt.imshow(
+            torchvision.utils.make_grid(c_aus, nrow=samples_per_image, normalize=False)
+            .numpy()
+            .transpose(1, 2, 0)
+        )
+        plt.axis("off")
+
+        # save
+        plt.savefig(
+            fname=os.path.join(
+                SAVE_PATH, f"{FOLD_NAME}_{set_to_plot}_gradCAM_img_{idx_img:03d}.pdf"
+            ),
+            dpi=100,
+            format="pdf",
+        )
+        plt.close(fig)
 
 # %%

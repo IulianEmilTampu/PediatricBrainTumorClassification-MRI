@@ -45,6 +45,44 @@ class AddGaussianNoise(object):
         )
 
 
+def str_class_to_numeric(
+    str_classes: list,
+    str_unique_classes: list = None,
+    one_hot: bool = True,
+    as_torch_tensors: bool = True,
+):
+    """
+    Utility that given a list of classes as strings converts them to numeric labels.
+    """
+    # get unique classes if not provided. This can be used to get an encoding in case the str_classes is missing some of the classes.
+    if not str_unique_classes:
+        str_unique_classes = list(dict.fromkeys(str_classes))
+
+    # sort the classes
+    str_unique_classes.sort()
+    # get numeric labels for each class
+    numeric_label = [str_unique_classes.index(l) for l in str_unique_classes]
+    # brin the numeric labels in the requested format
+    if one_hot:
+        if as_torch_tensors:
+            # return as one hot encoding torch tensors
+            numeric_label = torch.nn.functional.one_hot(torch.tensor(numeric_label))
+        else:
+            # return as list of one hot encoding
+            aus = np.zeros((len(numeric_label), len(numeric_label)), dtype=np.uint8)
+            for c in numeric_label:
+                aus[c, c] = 1
+            numeric_label = aus.tolist()
+    else:
+        if as_torch_tensors:
+            numeric_label = [torch.tensor(i) for i in numeric_label]
+
+    # build mapping
+    target_class_to_numeric_label = dict(zip(str_unique_classes, numeric_label))
+
+    return [target_class_to_numeric_label[c] for c in str_classes]
+
+
 def print_summary_from_dataset_split(dataset_split_df):
     # prints the number of training validation and testing files and subjects
     # for each of the sets

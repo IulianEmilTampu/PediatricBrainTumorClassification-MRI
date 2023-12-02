@@ -39,59 +39,6 @@ from pytorch_lightning.callbacks import Callback, LearningRateMonitor, ModelChec
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 
-"""
-Partially freezing is dependent on model architecture.
-
-ResNet50 -> it has 9 children in the model architecture. 
-- Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
-- Childrens 4 (64 -> 256, 10 convs), 5 (256 -> 512, 10 convs), 6 (512 -> 1024, 19 convs) and 7 (1024 -> 2048, 10 convs) are Sequentials making up most of the model.
-- Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
-- PERCENTAGE_FROZEN = 0.40: children 0 to 5 (7, 6 are training)
-- PERCENTAGE_FROZEN = 0.20.: children 0 to 4 (7, 6, 5 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-
-ResNet18 -> it has 9 children in the model architecture. 
-- Childrens 0 to 3 (conv, BatchNorm, ReLU, MaxPool) bring the input from 3 channels to 64 channels
-- Childrens 4 (64 -> 64, 4 convs), 5 (64 -> 128, 5 convs), 6 (128 -> 256, 5 convs) and 7 (256 -> 512, 5 convs) are Sequentials making up most of the model.
-- Children 8 and 9 are the average pool and the classification layer (children 9 is replaced based on the classification task)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 6 (7 is training)
-- PERCENTAGE_FROZEN = 0.60: children 0 to 5 (7, 6 are training)
-- PERCENTAGE_FROZEN = 0.40.: children 0 to 4 (7, 6, 5 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 to 3 (7, 6, 5, 4 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-ResNet9 -> it has 6 children in the model architecture. (https://github.com/Moddy2024/ResNet-9/tree/main)
-- Children 0 (conv, BatchNorm, ReLU) brings the input from 3 channels to 64 channels
-- Children 1 (conv, BatchNorm, ReLU, MaxPool) 64 -> 128
-- Children 2 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 128 -> 128
-- Children 3 (conv, BatchNorm, ReLU, MaxPool) 128 -> 256
-- Children 4 (conv, BatchNorm, ReLU, MaxPool) 256 -> 512
-- Children 5 (conv, BatchNorm, ReLU, conv, BatchNorm, ReLU) 512 -> 512
-- Children 6 (GlobalAveragePool, Flatten, Dropout, Dense) 512 -> classes (this is replaced by the new classification head)
-
-This is the definition of what is frozen when setting PERCENTAGE_FROZEN
-- PERCENTAGE_FROZEN = 1: all the model is frozen
-- PERCENTAGE_FROZEN = 0.80: children 0 to 4 (5 is training)
-- PERCENTAGE_FROZEN = 0.60: children 0 to 3 (5, 4 are training)
-- PERCENTAGE_FROZEN = 0.40.: children 0 to 2 (5, 4, 3 are training)
-- PERCENTAGE_FROZEN = 0.20.: children 0 to 1 (5, 4, 3, 2 are training)
-- PERCENTAGE_FROZEN = 0.05: children 0 (5, 4, 3, 2, 1 are training)
-- PERCENTAGE_FROZEN = 0.0: all the model if training
-
-ViT vit_b_N - > it has 3 children of which the last is the classification head and child 1 is the encoder.
-The encoder has 3 children of which the second is a Sequential with 12 EncoderBlocks (this can be accessed using len(net.encoder.layers))
-Here the fraction of layers to be frozen depends on the length of the Sequential layer in the model encoder. 
-So, if there are 12 encoding blocks, a fraction of 0.7 will freeze int(12 * 0.7) encoding layers.
-"""
 
 """
 Some useful links 

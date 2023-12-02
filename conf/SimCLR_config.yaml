@@ -10,12 +10,12 @@ SimCLR:
     batch_size: 64
     nbr_workers: 15
     class_stratification: True
-    test_size: 0.01
+    test_size: 0.2
     input_size: [224, 224]
     randomize_subject_labels: False
     randomize_slice_labels : False
     select_slices_in_range : null
-    use_slices_as_views: true
+    use_slices_as_views: false
     img_mean: # there are just to save the standardization values
     img_std: # there are just to save the standardization values
 
@@ -38,8 +38,8 @@ SimCLR:
     patience: 200
     learning_rate: 0.00001
     random_state: 20091229
-    nbr_repetitions: 1 # repetitions of cross validation
-    nbr_inner_cv_folds: 1 # number of cross validations in each repetition
+    nbr_repetitions: 2 # repetitions of cross validation
+    nbr_inner_cv_folds: 5 # number of cross validations in each repetition
 
 debugging_settings:
   dataset_fraction: 1
@@ -49,4 +49,4 @@ logging_settings:
   SimCLR_start_time: None
 
 resources:
-  gpu_nbr: 1
+  gpu_nbr: 3

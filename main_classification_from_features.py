@@ -6,7 +6,8 @@ Steps:
 1 -  define which model to evaluate
 2 - load the dataset split .csv file 
 3 - for every fold:
-    - extract features from the augmented training data using the pre-trained model
+    - extract features from the augmented training data using the pre-trained model. 
+        If age is used, the image and age features are extracted and PCA is performed on the concatenated vector of image and age features.
     - apply PCA to the extracted features
     - for every classifier:
         - fit classifier to the training data
@@ -65,51 +66,82 @@ import evaluation_utilities
 # %% LOCAL UTILITIES
 @torch.no_grad()
 def get_features(
-    model,
+    image_feature_extractor,
     data_loader,
+    use_age: bool = False,
+    age_feature_extractor=None,
     nbr_images_to_generate: int = None,
     device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"),
 ):
     # # Encode as many images as requested
-    feats, labels = [], []
+    if use_age:
+        feats, labels, ages = [], [], []
+    else:
+        feats, labels = [], []
     nbr_images_to_generate = (
         nbr_images_to_generate if nbr_images_to_generate else len(data_loader.dataset)
     )
     counter = 0
     while counter < nbr_images_to_generate:
-        for idx, (batch_imgs, batch_labels) in enumerate(data_loader):
-            batch_imgs = batch_imgs.to(device)
-            batch_feats = model(batch_imgs)
-            feats.extend(batch_feats.detach().cpu().numpy())
+        for idx, batch in enumerate(data_loader):
+            if use_age:
+                batch_img_input = batch[0].to(device)
+                batch_age_input = batch[2].to(device)
+                batch_labels = batch[1]
+                ages.extend(batch[2].numpy())
+                # encode the age
+                batch_age_feats = age_feature_extractor(batch_age_input)
+            else:
+                batch_img_input = batch[0].to(device)
+                batch_labels = batch[1]
+
+            batch_img_feats = image_feature_extractor(batch_img_input)
+            if use_age:
+                # concatenate image and age features, and save
+                batch_img_age_feats = torch.hstack([batch_img_feats, batch_age_feats])
+                feats.extend(batch_img_age_feats.detach().cpu().numpy())
+            else:
+                feats.extend(batch_img_feats.detach().cpu().numpy())
             labels.extend(batch_labels.numpy())
 
             # update counter
             counter += batch_labels.shape[0]
-
             print(
                 f"(feature extraction) Processing {counter}\{nbr_images_to_generate}\r",
                 end="",
             )
-
             if counter >= nbr_images_to_generate:
                 break
     print("\n")
 
-    return np.stack(feats), np.stack(labels)
+    if use_age:
+        return np.stack(feats), np.stack(labels), np.stack(ages)
+    else:
+        return np.stack(feats), np.stack(labels)
 
 
 @torch.no_grad()
 def get_original_model_prediction(
     model,
     data_loader,
+    use_age: bool = False,
     device=torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu"),
 ):
     # # Encode as many images as requested
-    pred, labels = [], []
+    if use_age:
+        pred, labels, age = [], [], []
+    else:
+        pred, labels = [], []
 
-    for idx, (batch_imgs, batch_labels) in enumerate(data_loader):
-        batch_imgs = batch_imgs.to(device)
-        batch_feats = model(batch_imgs)
+    for idx, batch in enumerate(data_loader):
+        if use_age:
+            model_input = (batch[0].to(device), batch[2].to(device))
+            batch_labels = batch[1]
+        else:
+            model_input = batch[0].to(device)
+            batch_labels = batch[1]
+
+        batch_feats = model(model_input)
         pred.extend(batch_feats.detach().cpu().numpy())
         labels.extend(batch_labels.numpy())
         print(
@@ -161,8 +193,12 @@ def plot_embeddings(
 
         # remove legend for all apart from last plot
         if idx == 2:
-            ax.legend(loc="center left", ncol=3, bbox_to_anchor=(1.1, 0.5))
-            plt.setp(ax.get_legend().get_texts(), fontsize="6")
+            lgnd = ax.legend(
+                loc="center left", ncol=3, bbox_to_anchor=(1.1, 0.5), fontsize=5
+            )
+            # plt.setp(ax.get_legend().get_texts(), fontsize="5")
+            for markers in lgnd.legendHandles:
+                markers._sizes = [10]
 
     # hide last axis
     axis[1, 1].axis("off")
@@ -170,6 +206,11 @@ def plot_embeddings(
     if save_figure:
         fig.savefig(
             os.path.join(save_path, f"{prefix}_{tool.upper()}.pdf"),
+            dpi=100,
+            bbox_inches="tight",
+        )
+        fig.savefig(
+            os.path.join(save_path, f"{prefix}_{tool.upper()}.png"),
             dpi=100,
             bbox_inches="tight",
         )
@@ -188,6 +229,7 @@ def plot_PCA_embeddings(
     save_path: str = None,
     prefix: str = "Embeddings_cluster",
     nbr_legend_columns: int = 3,
+    value_ranges=None,
 ):
     # create axis
     fig, axis = plt.subplots(nrows=2, ncols=2, figsize=(10, 10))
@@ -208,15 +250,32 @@ def plot_PCA_embeddings(
             legend=False if idx != 2 else True,
             ax=ax,
         )
+        # set axis limits
+        if value_ranges:
+            ax.set_xlim(
+                (value_ranges[dim_indexes[0]][0], value_ranges[dim_indexes[0]][1])
+            )
+            ax.set_ylim(
+                (value_ranges[dim_indexes[1]][0], value_ranges[dim_indexes[1]][1])
+            )
+
         # set title
         ax.set_title(f"PCA ({view_names})")
 
         # remove legend for all apart from last plot
         if idx == 2:
-            ax.legend(
-                loc="center left", ncol=nbr_legend_columns, bbox_to_anchor=(1.1, 0.5)
+            # ax.legend(
+            #     loc="center left", ncol=nbr_legend_columns, bbox_to_anchor=(1.1, 0.5)
+            # )
+            # plt.setp(ax.get_legend().get_texts(), fontsize="5")
+
+            # remove legend for all apart from last plot
+            lgnd = ax.legend(
+                loc="center left", ncol=3, bbox_to_anchor=(1.1, 0.5), fontsize=5
             )
-            plt.setp(ax.get_legend().get_texts(), fontsize="5")
+            # plt.setp(ax.get_legend().get_texts(), fontsize="5")
+            for markers in lgnd.legendHandles:
+                markers._sizes = [10]
 
     # hide last axis
     axis[1, 1].axis("off")
@@ -224,6 +283,11 @@ def plot_PCA_embeddings(
     if save_figure:
         fig.savefig(
             os.path.join(save_path, f"{prefix}.pdf"),
+            dpi=100,
+            bbox_inches="tight",
+        )
+        fig.savefig(
+            os.path.join(save_path, f"{prefix}.png"),
             dpi=100,
             bbox_inches="tight",
         )
@@ -287,11 +351,8 @@ classifiers = [
     QDA(),
 ]
 
-USE_AGE = True
-
-
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231130"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -301,13 +362,14 @@ for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
 print(f"Found {len(models_to_evaluate)} to work on.")
 
 # models_to_evaluate = [
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231129/ResNet50_pretrained_True_frozen_True_1.0_LR_1e-06_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t111416/REPETITION_2"
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t131710/REPETITION_1"
 # ]
 
 for idy, model_path in enumerate(models_to_evaluate):
     MODEL_INFO = {
         "pretraining_type": "classification",  # or SimCLR
         "path": model_path,
+        "hydra_config_path": os.path.join(model_path, "hydra_config.yaml"),
     }
     DATASET_INFO = {
         "dataset_split_path": os.path.join(
@@ -316,13 +378,15 @@ for idy, model_path in enumerate(models_to_evaluate):
         "nbr_training_samples_to_embed": None,  # this is an augmented version fo the training set.
     }
 
-    model_version = str(
-        os.path.basename(os.path.dirname(pathlib.Path(MODEL_INFO["path"])))
-    ).split("_")[0]
+    # load training configuration and get information about the model
+    training_config = OmegaConf.load(
+        MODEL_INFO["hydra_config_path"],
+    )
 
-    session_time = os.path.basename(
-        os.path.dirname(pathlib.Path(MODEL_INFO["path"]))
-    ).split("_")[-1]
+    model_version = training_config.model_settings.model_version
+    use_age = training_config.dataloader_settings.use_age
+    use_normalized_age = training_config.dataloader_settings.normalize_age
+    session_time = training_config.logging_settings.start_time
     repetition = str(os.path.basename(pathlib.Path(MODEL_INFO["path"])))
 
     SAVE_PATH = pathlib.Path(
@@ -370,16 +434,6 @@ for idy, model_path in enumerate(models_to_evaluate):
     dataset_split["age"] = [
         get_age_from_file_name(f) for f in list(dataset_split["file_path"])
     ]
-
-    # load hydra configuration to get normalization parameters
-    training_config = dict(
-        OmegaConf.load(
-            os.path.join(
-                MODEL_INFO["path"],
-                "hydra_config.yaml",
-            )
-        )
-    )
 
     # loop through all the available folds
     for fold_idx, fold in enumerate(
@@ -431,6 +485,7 @@ for idy, model_path in enumerate(models_to_evaluate):
             "one_hot_encodig",
             validation_labels_for_df,
         )
+
         [
             print(
                 f"{len(validation_files_for_inference.loc[validation_files_for_inference['target']==c]) for c in list(pd.unique(validation_files_for_inference['target']))}"
@@ -440,13 +495,13 @@ for idy, model_path in enumerate(models_to_evaluate):
         preprocess = T.Compose(
             [
                 T.Resize(
-                    size=training_config["dataloader_settings"]["input_size"],
+                    size=list(training_config.dataloader_settings.input_size),
                     antialias=True,
                 ),
                 T.ToTensor(),
                 T.Normalize(
-                    mean=training_config["dataloader_settings"]["img_mean"],
-                    std=training_config["dataloader_settings"]["img_std"],
+                    mean=list(training_config.dataloader_settings.img_mean),
+                    std=list(training_config.dataloader_settings.img_std),
                 ),
             ],
         )
@@ -475,8 +530,8 @@ for idy, model_path in enumerate(models_to_evaluate):
                 ),
                 T.ToTensor(),
                 T.Normalize(
-                    mean=training_config["dataloader_settings"]["img_mean"],
-                    std=training_config["dataloader_settings"]["img_std"],
+                    mean=list(training_config.dataloader_settings.img_mean),
+                    std=list(training_config.dataloader_settings.img_std),
                 ),
             ],
         )
@@ -488,10 +543,12 @@ for idy, model_path in enumerate(models_to_evaluate):
                 transform=preprocess,
                 labels=training_labels,
                 return_file_path=False,
-                return_age=False,
-                # ages=list(training_files_for_inference["age"])
+                return_age=use_age,
+                ages=list(training_files_for_inference["age_normalized"])
+                if use_normalized_age
+                else list(training_files_for_inference["age_in_days"]),
             ),
-            num_workers=0,
+            num_workers=15,
             batch_size=32,
         )
 
@@ -501,8 +558,12 @@ for idy, model_path in enumerate(models_to_evaluate):
                 transform=preprocess,
                 labels=validation_labels,
                 return_file_path=False,
+                return_age=use_age,
+                ages=list(validation_files_for_inference["age_normalized"])
+                if use_normalized_age
+                else list(validation_files_for_inference["age_in_days"]),
             ),
-            num_workers=0,
+            num_workers=15,
             batch_size=32,
         )
 
@@ -511,8 +572,11 @@ for idy, model_path in enumerate(models_to_evaluate):
         print(model_path)
         if MODEL_INFO["pretraining_type"] == "classification":
             original_model = torch.load(model_path)
-            original_model = deepcopy(original_model.model.model)
-            feature_extractor = deepcopy(original_model)
+            # original_model = deepcopy(original_model.model.model)
+            image_feature_extractor = deepcopy(original_model.model.model)
+            age_feature_extractor = (
+                deepcopy(original_model.age_encoder) if use_age else None
+            )
         elif MODEL_INFO["pretraining_type"] == "SimCLR":
             original_model = (
                 model_bucket_CBTN_v1.SimCLRModelWrapper.load_from_checkpoint(
@@ -520,21 +584,24 @@ for idy, model_path in enumerate(models_to_evaluate):
                 )
             )
             original_model = deepcopy(original_model.convnet)
-            feature_extractor = deepcopy(original_model)
+            image_feature_extractor = deepcopy(original_model)
 
         # remove classification head to only get the features
         if "resnet" in model_version.lower():
             if model_version.lower() == "resnet9":
-                feature_extractor.classifier[2] = torch.nn.Identity()
+                image_feature_extractor.classifier[2] = torch.nn.Identity()
             else:
-                feature_extractor.fc = torch.nn.Identity()
+                image_feature_extractor.fc = torch.nn.Identity()
         elif "vit" in model_version.lower():
-            feature_extractor.heads = torch.nn.Identity()
+            image_feature_extractor.heads = torch.nn.Identity()
 
         original_model.to(device)
         original_model.eval()
-        feature_extractor.to(device)
-        feature_extractor.eval()
+        image_feature_extractor.to(device)
+        image_feature_extractor.eval()
+        if age_feature_extractor:
+            age_feature_extractor.to(device)
+            age_feature_extractor.eval()
 
         # # %% DEBUG BUILD TRAINING DATALOADER
         # importlib.reload(dataset_utilities)
@@ -562,7 +629,9 @@ for idy, model_path in enumerate(models_to_evaluate):
         for data, data_name in zip(
             (training_dataset, validation_dataset), ("training", "validation")
         ):
-            pred, labels = get_original_model_prediction(original_model, data, device)
+            pred, labels = get_original_model_prediction(
+                original_model, data, use_age=use_age, device=device
+            )
             original_DL_classifier_performance[data_name][
                 f"original_DL_accuracy"
             ] = accuracy_score(
@@ -641,23 +710,34 @@ for idy, model_path in enumerate(models_to_evaluate):
             #     ]
 
         # %% OBTAIN TRAINING AND VALIDATION FEATURES
-        training_features, training_labels = get_features(
-            feature_extractor,
+        training_feats = get_features(
+            image_feature_extractor,
             training_dataset,
             nbr_images_to_generate=DATASET_INFO["nbr_training_samples_to_embed"],
+            use_age=use_age,
+            age_feature_extractor=age_feature_extractor,
         )
 
-        validation_freatures, validation_labels = get_features(
-            feature_extractor,
+        validation_feats = get_features(
+            image_feature_extractor,
             validation_dataset,
             nbr_images_to_generate=None,
+            use_age=use_age,
+            age_feature_extractor=age_feature_extractor,
         )
+
+        if use_age:
+            training_features, training_labels, training_ages = training_feats
+            validation_features, validation_labels, validation_ages = validation_feats
+        else:
+            training_features, training_labels = training_feats
+            validation_features, validation_labels = validation_feats
 
         # %% APPLY PCA ON THE TRAINING SET AND, USING THE SAME TRANSFORMATION, ON THE VALIDATION SET
         # work on plotting first (always PCA components = 3)
         pca = PCA(n_components=3)
         pca_training = pca.fit_transform(training_features)
-        pca_validation = pca.transform(validation_freatures)
+        pca_validation = pca.transform(validation_features)
 
         # plot first 3 dimensions
         plot_PCA_embeddings(
@@ -671,6 +751,11 @@ for idy, model_path in enumerate(models_to_evaluate):
             save_path=SAVE_PATH,
             prefix=f"PCA_training_set_fold_{fold_idx}",
             nbr_legend_columns=4,
+            value_ranges=(
+                (np.min(pca_training[:, 0]), np.max(pca_training[:, 0])),
+                (np.min(pca_training[:, 1]), np.max(pca_training[:, 1])),
+                (np.min(pca_training[:, 2]), np.max(pca_training[:, 2])),
+            ),
         )
 
         plot_PCA_embeddings(
@@ -683,12 +768,17 @@ for idy, model_path in enumerate(models_to_evaluate):
             save_figure=True,
             save_path=SAVE_PATH,
             prefix=f"PCA_validation_set_fold_{fold_idx}",
+            value_ranges=(
+                (np.min(pca_training[:, 0]), np.max(pca_training[:, 0])),
+                (np.min(pca_training[:, 1]), np.max(pca_training[:, 1])),
+                (np.min(pca_training[:, 2]), np.max(pca_training[:, 2])),
+            ),
         )
 
         # reperform PCA with the set number of components
         pca = PCA(n_components=PCA_NBR_COMPONENTS)
         pca_training = pca.fit_transform(training_features)
-        pca_validation = pca.transform(validation_freatures)
+        pca_validation = pca.transform(validation_features)
 
         # %% FOR ALL THE CLASSIFIERS FIT, AND GET STATS
         from matplotlib.colors import ListedColormap

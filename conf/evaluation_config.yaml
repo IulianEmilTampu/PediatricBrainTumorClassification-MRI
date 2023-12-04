@@ -1,5 +1,5 @@
 working_folder: null
-path_to_repetition_folders: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231124/ResNet50_pretrained_True_frozen_True_0.5_LR_1e-05_BATCH_32_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_t100754'
+path_to_repetition_folders: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t105532'
 save_path: null
 model_settings:
   path_to_cross_validation_folder:
@@ -9,6 +9,8 @@ model_settings:
 dataloader_settings: 
   path_to_data_split_csv_file: null
   set_to_evaluate: 'validation' # is can be training, validation, testing
+  use_age: null
+  normalize_age: null
   preprocessing_settings: 
     input_size: null        
     img_mean: null

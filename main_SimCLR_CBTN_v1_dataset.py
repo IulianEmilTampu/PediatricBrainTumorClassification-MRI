@@ -368,7 +368,33 @@ def run_SimCLR_training(config: dict) -> None:
 
             # save last model
             logger.info("Saving last model...")
-            torch.save(model, os.path.join(save_path, f"TB_fold_{fold+1}", "last.pt"))
+            try:
+                torch.save(
+                    model, os.path.join(save_path, f"TB_fold_{fold+1}", "last.pt")
+                )
+            except:
+                logger.info(
+                    "Failing to save model using torch.save. Loading the last checkpoint and saving."
+                )
+                # delete the model
+                del model
+                # re initialize from checkpoint
+                model = model_bucket_CBTN_v1.SimCLRModelWrapper.load_from_checkpoint(
+                    os.path.join(save_path, f"TB_fold_{fold+1}", "last.ckpt"),
+                    version=MODEL.lower(),
+                    pretrained=PRETRAINED,
+                    freeze_percentage=PERCENTAGE_FROZEN,
+                    lr=config["training_settings"]["learning_rate"],
+                )
+                # save model
+                try:
+                    torch.save(
+                        model, os.path.join(save_path, f"TB_fold_{fold+1}", "last.pt")
+                    )
+                except:
+                    logger.info(
+                        "Failing to save model using torch.save even after reinitialization from checkpoint. Use checkpoint to load the model in the future."
+                    )
 
 
 # %%

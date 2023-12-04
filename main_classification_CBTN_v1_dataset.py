@@ -25,6 +25,7 @@ import scipy.stats as stats
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
+from omegaconf.omegaconf import open_dict
 
 import torch
 from torch.utils.data import DataLoader, Dataset
@@ -73,7 +74,10 @@ def set_up(config: dict):
         parents=True, exist_ok=True
     )
 
-    # save the starting time
+    # save starting day and time
+    # OmegaConf.set_struct(config, True)
+    # with open_dict(config):
+    config["logging_settings"]["start_day"] = datetime.now().strftime("%Y%m%d")
     config["logging_settings"]["start_time"] = datetime.now().strftime("t%H%M%S")
 
     # -------------------------------------
@@ -117,7 +121,13 @@ def set_up(config: dict):
     )  # To be reproducable
 
 
-def get_info_from_SimCLR_pretraining(config: dict):
+def get_info_from_SimCLR_CBTN_pretraining(config: dict):
+    """
+    Utility that scrapes the SimCLR pretraining information to make it available for
+    the classification training.
+    In the case the pretraining dataset is config["model_settings"]["SimCLR_prettrained_model_setitngs"]["pretraining_dataset"] == CBTN
+    if returns the paths to the dataset splits used for the pretraining so that we avoid data leakege.
+    """
     logger = logging.getLogger("main.get_info_from_SimCLR_pretraining")
     logger.info(
         "Loading datasplit information from file (SimCLR pretraining on CBTN data)."
@@ -137,6 +147,7 @@ def get_info_from_SimCLR_pretraining(config: dict):
         info_from_simclr_pretraining[rep_nbr] = {
             "datasplit_path": os.path.join(rep, "data_split_information.csv"),
             "per_fold_model_paths": {},
+            "hydra_config_file": os.path.join(rep, "hydra_config.yaml"),
         }
         # loop throught the folds and get the path to the pre-trained model
         fold_folders = glob.glob(os.path.join(rep, "TB_fold_*"))
@@ -146,6 +157,20 @@ def get_info_from_SimCLR_pretraining(config: dict):
             info_from_simclr_pretraining[rep_nbr]["per_fold_model_paths"][
                 fold_nbr
             ] = os.path.join(fold, "last.pt")
+
+    # add the pretraining model version information
+    # load the SimCLR pre-training config file and get information
+    simclr_pretraining_config = OmegaConf.load(
+        info_from_simclr_pretraining[1]["hydra_config_file"]
+    )
+    # raise an error if the model version for the SimCLR and the classifier are different
+    if (
+        simclr_pretraining_config.model_settings.model_version.lower()
+        != config["model_settings"]["model_version"].lower()
+    ):
+        raise ValueError(
+            f'The SimCLR pretrained model version and the set classified model version are different. Given (SimCLR) {info_from_simclr_pretraining["pre_trained_model_version"].lower()} != (classifier) {config["model_settings"]["model_version"].lower()}'
+        )
 
     # adjust the config valus for the number of folds and repetitions
     nbr_folds = len(fold_folders)
@@ -171,15 +196,20 @@ def run_training(config: dict) -> None:
     PRETRAINED = config["model_settings"]["pre_trained"]
     PRETRAINED_TYPE = (
         "ImageNet"
-        if not config["model_settings"]["use_SimCLR_pretrained_model"]
+        if any(
+            [
+                not config["model_settings"]["use_SimCLR_pretrained_model"],
+                "use_SimCLR_pretrained_model" not in config["model_settings"].keys(),
+            ]
+        )
         else "SimCLR"
     )
     PRETRAINED_DATASET = (
-        config["model_settings"]["SimCLR_prettrained_model_setitngs"][
+        "ImageNet"
+        if PRETRAINED_TYPE == "ImageNet"
+        else config["model_settings"]["SimCLR_prettrained_model_setitngs"][
             "pretraining_dataset"
         ].upper()
-        if config["model_settings"]["use_SimCLR_pretrained_model"]
-        else "ImageNet"
     )
 
     FROZE_WEIGHTS = config["model_settings"]["freeze_weights"]
@@ -197,14 +227,47 @@ def run_training(config: dict) -> None:
     MR_std = np.array([0.5, 0.5, 0.5])
 
     # select the mean and std for the normalization
-    if all([PRETRAINED, not FROZE_WEIGHTS]):
-        # use ImageNet stats since the weights were trained using those stats
-        if "resnet" in config["model_settings"]["model_version"].lower():
+    if PRETRAINED:
+        if PRETRAINED_TYPE == "ImageNet":
+            # use ImageNet stats since the weights were trained using those stats
             img_mean = ImageNet_ResNet_mean
             img_std = ImageNet_ResNet_std
-        elif "vgg" in config["model_settings"]["model_version"].lower():
-            img_mean = ImageNet_VGG_mean
-            img_std = ImageNet_VGG_std
+        else:
+            # try to load the SimCLR pretraining img_mean and img_std from the pre_training .yaml file
+            if os.path.isdir(
+                config["model_settings"]["SimCLR_prettrained_model_setitngs"][
+                    "model_path"
+                ]
+            ):
+                # here the folder with the repetitions is given.
+                # Load the .yaml file from the first repetition.
+                pre_training_config = OmegaConf.load(
+                    os.path.join(
+                        config["model_settings"]["SimCLR_prettrained_model_setitngs"][
+                            "model_path"
+                        ],
+                        "REPETITION_1",
+                        "hydra_config.yaml",
+                    )
+                )
+                img_mean = np.array(pre_training_config.dataloader_settings.img_mean)
+                img_std = np.array(pre_training_config.dataloader_settings.img_std)
+            else:
+                # here the path points directly to the model .pt file. Move back to the repeittion folder and load .yaml
+                pre_training_config = OmegaConf.load(
+                    os.path.join(
+                        os.path.dirname(
+                            os.path.dirname(
+                                config["model_settings"][
+                                    "SimCLR_prettrained_model_setitngs"
+                                ]["model_path"]
+                            )
+                        ),
+                        "hydra_config.yaml",
+                    )
+                )
+                img_mean = np.array(pre_training_config.dataloader_settings.img_mean)
+                img_std = np.array(pre_training_config.dataloader_settings.img_std)
     else:
         # use MR stats since the encoder weights are trained
         img_mean = MR_mean
@@ -271,7 +334,7 @@ def run_training(config: dict) -> None:
             PRETRAINED_DATASET == "CBTN",
         ]
     ):
-        info_from_simclr_pretraining = get_info_from_SimCLR_pretraining(config)
+        info_from_simclr_pretraining = get_info_from_SimCLR_CBTN_pretraining(config)
     else:
         # ## get heuristics for this dataset type
         (
@@ -296,7 +359,6 @@ def run_training(config: dict) -> None:
             )
             # print information about training, validation and testing files since not performing the split but loading from file
             dataset_utilities.print_summary_from_dataset_split(dataset_split_df)
-
         else:
             dataset_split_df = dataset_utilities._get_split(
                 config,
@@ -465,13 +527,12 @@ def run_training(config: dict) -> None:
 
             # %% TRAIN MODEL
             save_name = f"{MODEL}_pretrained_{PRETRAINED}_{PRETRAINED_TYPE}_dataset_{PRETRAINED_DATASET}_frozen_{FROZE_WEIGHTS}_{PERCENTAGE_FROZEN}_LR_{LEARNING_RATE}_BATCH_{BATCH_SIZE}_AUGMENTATION_{config['dataloader_settings']['augmentation']}_OPTIM_{config['training_settings']['optimizer']}_SCHEDULER_{config['training_settings']['scheduler']}_MLPNODES_{config['model_settings']['mlp_nodes'][0] if len(config['model_settings']['mlp_nodes'])!=0 else 0}_useAge_{config['dataloader_settings']['use_age'] if 'use_age' in config['dataloader_settings'].keys() else False}_{config['logging_settings']['start_time']}"
-            print(save_name)
-            sys.exit()
+
             save_path = os.path.join(
                 config["working_dir"],
                 "trained_model_archive",
-                # f"ADDING_AGE_TO_TRAINING",
-                f"TESTs_{datetime.now().strftime('%Y%m%d')}",
+                # f"TESTs_{datetime.now().strftime('%Y%m%d')}",
+                f"TESTs_{config['logging_settings']['start_day']}",
                 save_name,
                 # "TEST",
                 f"REPETITION_{repetition_nbr+1}",
@@ -484,6 +545,18 @@ def run_training(config: dict) -> None:
             )
 
             # build the model based on specifications
+            if PRETRAINED_TYPE == "SimCLR":
+                if PRETRAINED_DATASET == "CBTN":
+                    SimCLR_model_path = info_from_simclr_pretraining[
+                        repetition_nbr + 1
+                    ]["per_fold_model_paths"][fold + 1]
+                else:
+                    SimCLR_model_path = config["model_settings"][
+                        "SimCLR_prettrained_model_setitngs"
+                    ]["model_path"]
+            else:
+                SimCLR_model_path = None
+
             model = model_bucket_CBTN_v1.LitModelWrapper(
                 version=MODEL.lower(),
                 nbr_classes=len(pd.unique(dataset_split_df["target"])),
@@ -499,14 +572,8 @@ def run_training(config: dict) -> None:
                 image_mean=img_mean,
                 image_std=img_std,
                 mpl_nodes=list(config["model_settings"]["mlp_nodes"]),
-                use_SimCLR_pretrained_model=config["model_settings"]["use_SimCLR_model"]
-                if "use_SimCLR_model" in config["model_settings"].keys()
-                else False,
-                SimCLR_model_path=config["model_settings"]["SimCLR_model_setitngs"][
-                    "model_path"
-                ]
-                if "SimCLR_model_setitngs" in config["model_settings"].keys()
-                else None,
+                use_SimCLR_pretrained_model=PRETRAINED_TYPE == "SimCLR",
+                SimCLR_model_path=SimCLR_model_path,
                 labels_as_string=list(target_class_to_one_hot_mapping.keys()),
                 use_age=config["dataloader_settings"]["use_age"]
                 if "use_age" in config["dataloader_settings"].keys()

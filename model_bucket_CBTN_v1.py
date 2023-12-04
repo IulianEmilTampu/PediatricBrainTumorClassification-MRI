@@ -873,6 +873,7 @@ class LitModelWrapper(pl.LightningModule):
             # build model based on SimCLR pretrained model
             self.model = ClassifierFromSimCLR(
                 SimCLR_model_path=SimCLR_model_path,
+                version=version,
                 nbr_classes=self.nbr_classes,
                 freeze_percentage=freeze_percentage,
                 mpl_nodes=self.mpl_nodes,
@@ -997,25 +998,31 @@ class LitModelWrapper(pl.LightningModule):
         self.image_std = torch.Tensor(image_std).unsqueeze(-1).unsqueeze(-1)
 
     def forward(self, x):
-        if self.use_age:
-            # encode image
-            image_encoding = self.model(x[0])
-            # encode_age
-            age_encoding = self.age_encoder(x[1])
-            # concatenate and throught the fusion layer
-            return self.fusion_layer(
-                torch.concat((image_encoding, age_encoding), dim=1)
-            )
+        if hasattr(self, "use_age"):
+            if self.use_age:
+                # encode image
+                image_encoding = self.model(x[0])
+                # encode_age
+                age_encoding = self.age_encoder(x[1])
+                # concatenate and throught the fusion layer
+                return self.fusion_layer(
+                    torch.concat((image_encoding, age_encoding), dim=1)
+                )
+            else:
+                return self.model(x)
         else:
             return self.model(x)
 
     def prepare_batch(self, batch):
-        if self.use_age:
-            # print(f"prepare batch: image {batch[0].shape}")
-            # print(f"prepare batch: age {batch[2].shape}")
-            # print(f"prepare batch: label {batch[1].shape}")
-            # unpack the image, the age and the label
-            return (batch[0], batch[2]), batch[1]
+        if hasattr(self, "use_age"):
+            if self.use_age:
+                # print(f"prepare batch: image {batch[0].shape}")
+                # print(f"prepare batch: age {batch[2].shape}")
+                # print(f"prepare batch: label {batch[1].shape}")
+                # unpack the image, the age and the label
+                return (batch[0], batch[2]), batch[1]
+            else:
+                return batch[0], batch[1]
         else:
             return batch[0], batch[1]
 

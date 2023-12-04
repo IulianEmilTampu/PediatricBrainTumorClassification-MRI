@@ -151,6 +151,17 @@ def set_up(evaluation_config):
         ]
     )
 
+    evaluation_config["dataloader_settings"]["use_age"] = (
+        training_config["dataloader_settings"]["use_age"]
+        if "use_age" in training_config["dataloader_settings"].keys()
+        else False
+    )
+    evaluation_config["dataloader_settings"]["normalize_age"] = (
+        training_config["dataloader_settings"]["normalize_age"]
+        if "normalize_age" in training_config["dataloader_settings"].keys()
+        else False
+    )
+
     # ------------------------
     # Run check on the folder
     # -----------------------
@@ -172,6 +183,9 @@ def set_up(evaluation_config):
 def run_evaluation_repetition_evaluation(config: dict):
     # %%GET FILES, SET UP LABEL DICTIONARY MAP and the pre-processing transform
     # load .csv file
+    print(
+        f'Dataset split path: {f"{os.path.sep}".join((Path(config["dataloader_settings"]["path_to_data_split_csv_file"]).parts[-3::]))}'
+    )
     dataset_split = pd.read_csv(
         config["dataloader_settings"]["path_to_data_split_csv_file"]
     )
@@ -221,16 +235,17 @@ def run_evaluation_repetition_evaluation(config: dict):
         )
     ):
         # get paths to model
-        aus_dict = {"last": None, "best": None}
+        aus_dict = {"last": None, "best": None, "fold_nbr": None}
         for mv in ["last", "best"]:
             if os.path.isfile(os.path.join(f, mv + ".pt")):
                 aus_dict[mv] = os.path.join(f, mv + ".pt")
+        aus_dict["fold_nbr"] = int(os.path.basename(Path(f)).split("_")[-1])
         MODELS.append(aus_dict)
 
     # print what has been found
     for idx, m in enumerate(MODELS):
         print(
-            f"Fold {idx+1}\n  Last model: {True if m['last'] else None}\n  Best model: {True if m['best'] else None}"
+            f"Fold {m['fold_nbr']}\n  Last model: {True if m['last'] else None}\n  Best model: {True if m['best'] else None}"
         )
 
     #  %% GET EVALUATION PERFORMANCE ON A SLICE LEVEL
@@ -241,20 +256,19 @@ def run_evaluation_repetition_evaluation(config: dict):
     device = (
         torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
     )
-    for cv_f, M in enumerate(MODELS):
+    for M in MODELS:
         print("\n")
         for mv in ["last", "best"]:
             if M[mv]:
                 # load model
                 model = torch.load(M[mv])
-                model = deepcopy(model.model.model)
                 model.to(device)
                 model.eval()
 
                 # get files for this model evaluation. This depends on the fold and the set_to_evaluate specified.
                 # This is easy when using the .cvs file created during the dataset split during training.
                 files_for_inference = dataset_split.loc[
-                    dataset_split[f"fold_{cv_f+1}"]
+                    dataset_split[f"fold_{M['fold_nbr']}"]
                     == config["dataloader_settings"]["set_to_evaluate"]
                 ]
                 # make torch tensor labels
@@ -274,6 +288,14 @@ def run_evaluation_repetition_evaluation(config: dict):
                         transform=pre_process_transform,
                         labels=labels,
                         return_file_path=False,
+                        return_age=config["dataloader_settings"]["use_age"],
+                        ages=(
+                            list(files_for_inference["age_normalized"])
+                            if config["dataloader_settings"]["normalize_age"]
+                            else list(files_for_inference["age_in_days"])
+                        )
+                        if config["dataloader_settings"]["use_age"]
+                        else None,
                     ),
                     batch_size=32,
                     num_workers=15,
@@ -285,15 +307,23 @@ def run_evaluation_repetition_evaluation(config: dict):
                 with torch.no_grad():
                     for b in range(len(dataset)):
                         print(
-                            f"Working on fold {cv_f + 1}, {mv} model version, batch {b+1}/{len(dataset)} \r",
+                            f"Working on fold {M['fold_nbr']}, {mv} model version, batch {b+1}/{len(dataset)} \r",
                             end="",
                         )
-                        x, y = next(dataset)
-                        pred_list.extend(model(x.to(device)).to("cpu").numpy().tolist())
+                        batch = next(dataset)
+                        if config["dataloader_settings"]["use_age"]:
+                            x = (batch[0].to(device), batch[2].to(device))
+                            y = batch[1]
+                        else:
+                            x = batch[0].to(device)
+                            y = batch[1]
+                        pred_list.extend(model(x).to("cpu").numpy().tolist())
 
                 # add the predictions to the dataframe
                 files_for_inference.insert(
-                    files_for_inference.shape[1], f"pred_fold_{cv_f+1}", pred_list
+                    files_for_inference.shape[1],
+                    f"pred_fold_{M['fold_nbr']}",
+                    pred_list,
                 )
                 # save dataframe
                 summary_evaluation.append(files_for_inference)

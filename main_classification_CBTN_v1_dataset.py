@@ -273,6 +273,9 @@ def run_training(config: dict) -> None:
         img_mean = MR_mean
         img_std = MR_std
 
+    img_mean = np.array([0.5, 0.5, 0.5])
+    img_std = np.array([0.5, 0.5, 0.5])
+
     # save image mean and std
     config["dataloader_settings"]["img_mean"] = img_mean.tolist()
     config["dataloader_settings"]["img_std"] = img_std.tolist()

@@ -352,7 +352,7 @@ classifiers = [
 ]
 
 # %% LOOP ON MANY MODELS and FOLDS
-model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231204"
+model_save_path = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231206"
 models_to_evaluate = []
 for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
     # for all the repetiitons
@@ -361,9 +361,9 @@ for model_run in glob.glob(os.path.join(model_save_path, "*", "")):
 
 print(f"Found {len(models_to_evaluate)} to work on.")
 
-# models_to_evaluate = [
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t131710/REPETITION_1"
-# ]
+models_to_evaluate = [
+    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/T1_TESTs_20231208/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t093746/REPETITION_2"
+]
 
 for idy, model_path in enumerate(models_to_evaluate):
     MODEL_INFO = {

@@ -1329,15 +1329,15 @@ class LitModelWrapper(pl.LightningModule):
         self.loggers[0].experiment.add_figure(fig_name, fig_, self.current_epoch)
         plt.close(fig_)
 
-        # save confusion matrix using evaluation utilities (this is for debugging)
-        evaluation_utilities.plotConfusionMatrix(
-            GT=y.detach().numpy(),
-            PRED=softmax(y_hat.detach().numpy()),
-            classes=["ASTR", "EP", "MED"],
-            savePath="/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231128",
-            saveName=f"{fig_name}_{self.trainer.global_step}",
-            draw=False,
-        )
+        # # save confusion matrix using evaluation utilities (this is for debugging)
+        # evaluation_utilities.plotConfusionMatrix(
+        #     GT=y.detach().numpy(),
+        #     PRED=softmax(y_hat.detach().numpy()),
+        #     classes=["ASTR", "EP", "MED"],
+        #     savePath=None,
+        #     saveName=f"{fig_name}_{self.trainer.global_step}",
+        #     draw=False,
+        # )
 
     def save_imgs(self, imgs: torch.Tensor, title: str = "TB_saved_img"):
         with torch.no_grad():

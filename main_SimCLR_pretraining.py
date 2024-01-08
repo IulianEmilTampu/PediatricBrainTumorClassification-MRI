@@ -235,6 +235,16 @@ def run_SimCLR_training(config: dict) -> None:
                 ]["target"]
             )
 
+            if config["training_settings"]["running_for_final_testing"]:
+                # combine the validation and the trainig set so that the model can learn from a largerd sample size.
+                # NOTE. This should only be done after all the experimetns are performed and one is ready for the running the model one last time.
+                logging.info(
+                    'ATTENTION!!!\nRunning training script in "final run mode", where the training and the validation sets are combined.\nThis is to allow the model train on all the non test samples.\nThis should only be the case if you are ready for the last run befor getting the test results.'
+                )
+                # concatenate training and validation samples
+                files_for_training.extend(files_for_validation)
+                training_targets.extend(validation_targets)
+
             files_for_testing = list(
                 dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "test"][
                     "file_path"
@@ -292,7 +302,7 @@ def run_SimCLR_training(config: dict) -> None:
                 config["working_dir"],
                 "trained_model_archive",
                 # f"TESTs_{datetime.now().strftime('%Y%m%d')}_2DSDM4_exp",
-                f"SimCLR_TESTs_{datetime.now().strftime('%Y%m%d')}",
+                f"{config['dataset']['modality']}_SimCLR_TESTs_{datetime.now().strftime('%Y%m%d')}",
                 save_name,
                 f"REPETITION_{repetition_nbr+1}",
             )

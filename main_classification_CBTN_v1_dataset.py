@@ -273,8 +273,8 @@ def run_training(config: dict) -> None:
         img_mean = MR_mean
         img_std = MR_std
 
-    img_mean = np.array([0.5, 0.5, 0.5])
-    img_std = np.array([0.5, 0.5, 0.5])
+    # img_mean = np.array([0.5, 0.5, 0.5])
+    # img_std = np.array([0.5, 0.5, 0.5])
 
     # save image mean and std
     config["dataloader_settings"]["img_mean"] = img_mean.tolist()
@@ -444,6 +444,17 @@ def run_training(config: dict) -> None:
                 dataset_split_df[f"fold_{fold+1}"] == "validation"
             ].reset_index()
 
+            if config["training_settings"]["running_for_final_testing"]:
+                # combine the validation and the trainig set so that the model can learn from a largerd sample size.
+                # NOTE. This should only be done after all the experimetns are performed and one is ready for the running the model one last time.
+                logging.info(
+                    'ATTENTION!!!\nRunning training script in "final run mode", where the training and the validation sets are combined.\nThis is to allow the model train on all the non test samples.\nThis should only be the case if you are ready for the last run befor getting the test results.'
+                )
+                # concatenate training and validation samples
+                samples_for_training = pd.concat(
+                    [samples_for_training, samples_for_validation]
+                )
+
             samples_for_testing = dataset_split_df.loc[
                 dataset_split_df[f"fold_{fold+1}"] == "test"
             ].reset_index()
@@ -535,7 +546,7 @@ def run_training(config: dict) -> None:
                 config["working_dir"],
                 "trained_model_archive",
                 # f"TESTs_{datetime.now().strftime('%Y%m%d')}",
-                f"TESTs_{config['logging_settings']['start_day']}",
+                f"{config['dataset']['modality']}_TESTs_{config['logging_settings']['start_day']}",
                 save_name,
                 # "TEST",
                 f"REPETITION_{repetition_nbr+1}",

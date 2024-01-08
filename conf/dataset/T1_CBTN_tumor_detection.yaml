@@ -1,0 +1,4 @@
+name: CBTN_tumor_detection
+modality: T1
+dataset_path: /flush2/iulta54/Data/CBTN_v1/T1_TUMOR_and_NO_TUMOR_SLICES
+classes_of_interest: ['0', '1'] 

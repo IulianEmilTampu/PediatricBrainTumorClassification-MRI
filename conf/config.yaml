@@ -1,6 +1,6 @@
 defaults:
 - _self_
-- dataset: CBTN_tumor_classification_ASTR_EP_MED
+- dataset: T1_CBTN_tumor_classification_ASTR_EP_MED
 
 working_dir: ${hydra:runtime.cwd}
 
@@ -17,7 +17,7 @@ dataloader_settings:
   use_one_slice_per_subject_within_epoch: False
   img_mean: # there are just to save the standardization values
   img_std: # there are just to save the standardization values
-  use_age: true
+  use_age: false
   normalize_age: true
 
 
@@ -31,9 +31,9 @@ augmentation_settings:
 model_settings:
   use_SimCLR_pretrained_model: False
   SimCLR_prettrained_model_setitngs:
-    model_path: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/SimCLR_TESTs_20231201/SimCLR_ResNet50_pretrained_True_frozen_True_0_LR_1e-05_BATCH_64_TrivialAug_True_t093804'
-    pretraining_dataset: cbtn
-  model_version: ViT_b_16 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
+    model_path: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/SimCLR_TESTs_20231201/SimCLR_ResNet50_pretrained_True_frozen_True_0_LR_1e-05_BATCH_64_TrivialAug_True_t153001/REPETITION_1/TB_fold_1/last.pt'
+    pretraining_dataset: tcga
+  model_version: ResNet50 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
   pre_trained: True
   freeze_weights: True
   percentage_freeze_weights: 0.5
@@ -43,7 +43,7 @@ model_settings:
 training_settings:
   epochs: 500
   patience: 20
-  learning_rate: 0.000005
+  learning_rate: 0.00001
   optimizer : adam # adamw, sgd, adam
   scheduler : exponential # linear_decay, cyclical, reduce_on_plateau, static
   use_look_ahead_wrapper : False
@@ -52,6 +52,7 @@ training_settings:
   nbr_repetitions: 2 # repetitions of cross validation
   nbr_inner_cv_folds: 5 # number of cross validations in each repetition
   run_testing: False # set to true only when model hiperparameters are tuned to get the final evaluation
+  running_for_final_testing: false
   
 debugging_settings:
   dataset_fraction: 1
@@ -63,4 +64,4 @@ logging_settings:
   start_time: 
 
 resources:
-  gpu_nbr: 0
+  gpu_nbr: 3

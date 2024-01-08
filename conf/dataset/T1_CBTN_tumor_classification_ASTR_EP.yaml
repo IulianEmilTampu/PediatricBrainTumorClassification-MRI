@@ -1,0 +1,6 @@
+name: CBTN_tumor_classification
+modality: T1
+dataset_path: /flush2/iulta54/Data/CBTN_v1/T1_TUMOR_SLICES_ONLY_RLP_20_80
+classes_of_interest: ['ASTROCYTOMA', 'EPENDYMOMA'] 
+# merge_specification: {'ASTR_MED': ['ASTROCYTOMA', 'MEDULLOBLASTOMA'], 'EP':['EPENDYMOMA']}
+merge_specification: null

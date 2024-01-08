@@ -1,6 +1,6 @@
 defaults:
 - _self_
-- dataset: CBTN_tumor_classification_ASTR_EP_MED # Find a way to have two different datasets, one for the SimCLR training and one for the classification training
+- dataset: T1_CBTN_tumor_classification_ASTR_EP_MED # Find a way to have two different datasets, one for the SimCLR training and one for the classification training
 
 working_dir: ${hydra:runtime.cwd}
 
@@ -29,9 +29,9 @@ SimCLR:
 
   model_settings:
     model_version: ResNet50 # this can be ResNet50, ResNet18, 2DSDM4, RadResNet, ViT_b_16, ViT_b_32
-    pre_trained: True
-    freeze_weights: True
-    percentage_freeze_weights: 0
+    pre_trained: true
+    freeze_weights: true
+    percentage_freeze_weights: 0.0
 
   training_settings:
     epochs: 200
@@ -40,6 +40,7 @@ SimCLR:
     random_state: 20091229
     nbr_repetitions: 2 # repetitions of cross validation
     nbr_inner_cv_folds: 5 # number of cross validations in each repetition
+    running_for_final_testing: false
 
 debugging_settings:
   dataset_fraction: 1

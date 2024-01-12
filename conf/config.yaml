@@ -2,6 +2,11 @@ defaults:
 - _self_
 - dataset: T1_CBTN_tumor_classification_ASTR_EP_MED
 
+restart_training_settings:
+  restart_training: False
+  model_folder_path: /flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/T2_TESTs_20240108/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t152510
+  restart_from: # here to save values by the script
+
 working_dir: ${hydra:runtime.cwd}
 
 dataloader_settings:
@@ -64,4 +69,4 @@ logging_settings:
   start_time: 
 
 resources:
-  gpu_nbr: 3
+  gpu_nbr: 1

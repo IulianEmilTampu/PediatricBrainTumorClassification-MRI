@@ -63,24 +63,6 @@ import dataset_utilities
 
 def set_up(config: dict):
     # -------------------------------------
-    # Create folder where to save the model
-    # -------------------------------------
-    config["logging_settings"]["checkpoint_path"] = os.path.join(
-        config["logging_settings"]["checkpoint_path"],
-        f"{datetime.now().strftime('%Y%m%d')}",
-    )
-
-    Path(config["logging_settings"]["checkpoint_path"]).mkdir(
-        parents=True, exist_ok=True
-    )
-
-    # save starting day and time
-    # OmegaConf.set_struct(config, True)
-    # with open_dict(config):
-    config["logging_settings"]["start_day"] = datetime.now().strftime("%Y%m%d")
-    config["logging_settings"]["start_time"] = datetime.now().strftime("t%H%M%S")
-
-    # -------------------------------------
     # Start logger in the SAVE_PATH folder
     # -------------------------------------
     logging.basicConfig(
@@ -98,7 +80,7 @@ def set_up(config: dict):
     # tell the handler to use this format
     console.setFormatter(formatter)
     # add the handler to the root logger
-    logging.getLogger().addHandler(console)
+    # logging.getLogger().addHandler(console)
 
     # define logger for this application
     setup_logger = logging.getLogger("main.setup")
@@ -113,12 +95,126 @@ def set_up(config: dict):
     # ---------------------
     os.environ["CUDA_VISIBLE_DEVICES"] = str(config["resources"]["gpu_nbr"])
 
+    # -------------------------------------------
+    # CHECK IF RUNNING IN 'RESTART TRAINING' MODE
+    # -------------------------------------------
+
+    if all(
+        [
+            "restart_training_settings" in config.keys(),
+            config["restart_training_settings"]["restart_training"],
+        ]
+    ):
+        setup_logger.info("##### RUNNING IN RESTART TRAINING MODE #####")
+        if not os.path.isdir(config["restart_training_settings"]["model_folder_path"]):
+            raise ValueError(
+                f'Requesting script to run in restart training mode, but the given model path does not exist. Given {config["restart_training_settings"]["model_folder_path"]}'
+            )
+
+        """
+        Need to check how far the model went, and set restart_from.
+        - load the configuration file for this run.
+        - check how many repetition and cross validation folds were expected
+        - get how far it went by checking the repetition and fold folders (there must be a last.pt file for a fold to be complete).
+        - set restart_from:
+            - it is a dict with as many keys as the total repetitions and for each the folds that need to be run:
+                e.g. -> {0: [], 1: [], 2:[3,4], 3:[0,1,2,3,4]} this means that the model will resume training from 
+                        repetition 2, running fold 2 and 3, and then repetition 3 all the folds.
+        """
+        # load the stopped training configuration file
+        stopped_training_config = OmegaConf.load(
+            os.path.join(
+                config["restart_training_settings"]["model_folder_path"],
+                "REPETITION_1",
+                "hydra_config.yaml",
+            )
+        )
+        # get infromation from this configuration file
+        nbr_expected_repetitions = (
+            stopped_training_config.training_settings.nbr_repetitions
+        )
+        nbr_expected_folds = (
+            stopped_training_config.training_settings.nbr_inner_cv_folds
+        )
+        setup_logger.info(
+            f"  Expected {nbr_expected_repetitions} repetitions, each with {nbr_expected_folds} folds."
+        )
+        # build restart_from
+        restart_from = dict.fromkeys(range(nbr_expected_repetitions))
+        # loop through the repetition folders and check if all the folds where completed
+        for rep in range(nbr_expected_repetitions):
+            rep_folder = os.path.join(
+                config["restart_training_settings"]["model_folder_path"],
+                f"REPETITION_{rep+1}",
+            )
+            if not os.path.isdir(rep_folder):
+                # flag all the folds for this repetition to be trained
+                restart_from[rep] = list(range(nbr_expected_folds))
+            else:
+                restart_from[rep] = []
+                # this repetition has been initiated. Check how many folds it has completed
+                for fold in range(nbr_expected_folds):
+                    fold_folder = os.path.join(rep_folder, f"TB_fold_{fold+1}")
+                    if not os.path.isdir(fold_folder):
+                        # flag this fold for training
+                        restart_from[rep].append(fold)
+                    else:
+                        # this fold has been initiated, check if it has finished.
+                        last_model_path = os.path.join(fold_folder, "last.pt")
+                        if not os.path.isfile(last_model_path):
+                            # the last model was not saved, meaning that the fold was not completed.
+                            restart_from[rep].append(fold)
+        # print summary of what is going to be trained
+        for rep, value in restart_from.items():
+            if len(value) == nbr_expected_folds:
+                setup_logger.info(
+                    f"  Repetition {rep+1:0{len(str(nbr_expected_repetitions))}d}: running all the folds."
+                )
+            else:
+                setup_logger.info(
+                    f"  Repetition {rep+1:0{len(str(nbr_expected_repetitions))}d}: running folds {[v+1 for v in value]}."
+                )
+
+        # convert the stopped_training_config into a dict and save restart_from
+        stopped_training_config = dict(stopped_training_config)
+        # add the restart configuration
+        stopped_training_config["restart_training_settings"] = config[
+            "restart_training_settings"
+        ]
+        # and what to restart
+        stopped_training_config["restart_training_settings"][
+            "restart_from"
+        ] = restart_from
+        # replace configuration file with the old one
+        config = stopped_training_config
+
+    else:
+        # -------------------------------------
+        # Create folder where to save the model
+        # -------------------------------------
+        config["logging_settings"]["checkpoint_path"] = os.path.join(
+            config["logging_settings"]["checkpoint_path"],
+            f"{datetime.now().strftime('%Y%m%d')}",
+        )
+
+        Path(config["logging_settings"]["checkpoint_path"]).mkdir(
+            parents=True, exist_ok=True
+        )
+
+        # save starting day and time
+        # OmegaConf.set_struct(config, True)
+        # with open_dict(config):
+        config["logging_settings"]["start_day"] = datetime.now().strftime("%Y%m%d")
+        config["logging_settings"]["start_time"] = datetime.now().strftime("t%H%M%S")
+
     # ---------------------
     # SEED EVERYTHING
     # ---------------------
     pl.seed_everything(
         config["training_settings"]["random_state"]
     )  # To be reproducable
+
+    return config
 
 
 def get_info_from_SimCLR_CBTN_pretraining(config: dict):
@@ -349,7 +445,23 @@ def run_training(config: dict) -> None:
         ) = dataset_utilities.get_dataset_heuristics(config["dataset"]["name"])
 
     # %% RUN REPETITIONS
-    for repetition_nbr in range(config["training_settings"]["nbr_repetitions"]):
+    # check which repetitions need to be run (this is to account for restarting the model training)
+    if all(
+        [
+            "restart_training_settings" in config.keys(),
+            config["restart_training_settings"]["restart_training"],
+        ]
+    ):
+        # get all the repetitions that have at least one fold to be run
+        repetitions_to_run = [
+            r
+            for r, f in config["restart_training_settings"]["restart_from"].items()
+            if len(f) != 0
+        ]
+    else:
+        repetitions_to_run = list(range(config["training_settings"]["nbr_repetitions"]))
+
+    for repetition_nbr in repetitions_to_run:
         if all(
             [
                 PRETRAINED_TYPE == "SimCLR",
@@ -430,7 +542,22 @@ def run_training(config: dict) -> None:
             dataset_split_df["age_normalized"] = [None] * len(dataset_split_df)
 
         # %% RUN TRAINING FOR THE DIFFERENT FOLDS
-        for fold in range(config["training_settings"]["nbr_inner_cv_folds"]):
+        # check which repetitions need to be run (this is to account for restarting the model training)
+        if all(
+            [
+                "restart_training_settings" in config.keys(),
+                config["restart_training_settings"]["restart_training"],
+            ]
+        ):
+            # get all the repetitions that have at least one fold to be run
+            folds_to_run = config["restart_training_settings"]["restart_from"][
+                repetition_nbr
+            ]
+        else:
+            folds_to_run = list(
+                range(config["training_settings"]["nbr_inner_cv_folds"])
+            )
+        for fold in folds_to_run:
             logger.info(
                 f'Working on fold {fold+1}/{config["training_settings"]["nbr_inner_cv_folds"]} of repetition {repetition_nbr+1}/{config["training_settings"]["nbr_repetitions"]}'
             )
@@ -545,10 +672,8 @@ def run_training(config: dict) -> None:
             save_path = os.path.join(
                 config["working_dir"],
                 "trained_model_archive",
-                # f"TESTs_{datetime.now().strftime('%Y%m%d')}",
                 f"{config['dataset']['modality']}_TESTs_{config['logging_settings']['start_day']}",
                 save_name,
-                # "TEST",
                 f"REPETITION_{repetition_nbr+1}",
             )
             Path(save_path).mkdir(exist_ok=True, parents=True)
@@ -674,11 +799,13 @@ def run_training(config: dict) -> None:
 @hydra.main(version_base=None, config_path="conf", config_name="config")
 def main(config: DictConfig):
     config = dict(config)
-    set_up(config)
+    config = set_up(config)
+
     run_training(config)
 
-    if config["training_settings"]["run_testing"]:
-        print("Gathering testing performance metrics")
+    # TODO
+    # if config["training_settings"]["run_testing"]:
+    #     print("Gathering testing performance metrics")
 
 
 if __name__ == "__main__":

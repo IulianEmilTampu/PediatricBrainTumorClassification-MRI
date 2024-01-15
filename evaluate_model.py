@@ -3,7 +3,7 @@
 Script runs model evaluation over cross validation models.
 The script uses a hydra configuration file for specifying where the models are located, where the dataset is and how is splits, etc.
 The script iterates over the models and performs predictions on the subjects specified by the set parameter in the hydra configuration file 
-(the set can be training, validation or testing). The predicted logits for each slide is saved into a pandas tadaframe that holds the infromation
+(the set can be training, validation or testing). The predicted logits for each slide is saved into a pandas dataframe that holds the information
 abour that slide (subject ID, target class, file_path, etc.). Using this dataframe, the predicted logits are maniputated to obtain:
 - per slice ensemble prediction: mean over the logits from the cross-validation models (per_slice_ensemble)
 - per slice entropy: Shannon entropy calculated over the softmax of the cross-validation models (per_slice_entropy)
@@ -281,6 +281,46 @@ def run_evaluation_repetition_evaluation(config: dict):
                 files_for_inference.insert(
                     files_for_inference.shape[1], "one_hot_encodig", labels_for_df
                 )
+
+                # fix the missing age normalizad values for the test set
+                if all(
+                    [
+                        config["dataloader_settings"]["set_to_evaluate"] == "test",
+                        np.isnan(list(files_for_inference["age_normalized"])[0]),
+                    ]
+                ):
+                    print("Fixing normalized age in the testing set...")
+                    # retrieve the age in days from the file name
+                    test_ages = np.array(files_for_inference["age_in_days"])
+                    # get the mean and std deviation from the training cases in this fold
+                    train_ages = np.array(
+                        dataset_split.loc[
+                            dataset_split[f"fold_{M['fold_nbr']}"] == "training"
+                        ]["age_in_days"]
+                    )
+                    age_mean = np.mean(
+                        train_ages[
+                            np.logical_and(
+                                train_ages > np.percentile(train_ages, 0.5),
+                                train_ages <= np.percentile(train_ages, 99.5),
+                            )
+                        ]
+                    )
+                    age_std = np.std(
+                        train_ages[
+                            np.logical_and(
+                                train_ages > np.percentile(train_ages, 0.5),
+                                train_ages <= np.percentile(train_ages, 99.5),
+                            )
+                        ]
+                    )
+                    # normalize and save age values
+                    test_ages_normalized = (test_ages - age_mean) / age_std
+                    files_for_inference.loc[
+                        :, "age_normalized"
+                    ] = test_ages_normalized.tolist()
+
+                    # pint(files_for_inference)
                 # build generator on these files
                 dataset = DataLoader(
                     dataset_utilities.PNGDatasetFromFolder(
@@ -311,12 +351,14 @@ def run_evaluation_repetition_evaluation(config: dict):
                             end="",
                         )
                         batch = next(dataset)
+
                         if config["dataloader_settings"]["use_age"]:
                             x = (batch[0].to(device), batch[2].to(device))
                             y = batch[1]
                         else:
                             x = batch[0].to(device)
                             y = batch[1]
+
                         pred_list.extend(model(x).to("cpu").numpy().tolist())
 
                 # add the predictions to the dataframe
@@ -327,6 +369,7 @@ def run_evaluation_repetition_evaluation(config: dict):
                 )
                 # save dataframe
                 summary_evaluation.append(files_for_inference)
+
     print("\n")
 
     # %% WORK ON THE DATAFRAMES
@@ -386,7 +429,7 @@ def run_evaluation_repetition_evaluation(config: dict):
     )
 
     # %% WORK ON THE PATIENT LEVEL AGGREGATIONS
-    # This is a little bit nasty since, in the case of thraining and validation, there are subjects that are only used in one of the folds.
+    # This is a little bit nasty since, in the case of training and validation, there are subjects that are only used in one of the folds.
     # Thus, need to account for the None values and substitute such that the plotting and following code works.
     def proces_subject_wise_predictions(
         grouped_data,
@@ -526,7 +569,7 @@ def run_evaluation_repetition_evaluation(config: dict):
             list(collapsed_summary_evaluation["one_hot_encodig"])
         )
 
-        # remove nones from the predicitions
+        # remove NaNs from the predicitions
         Ptest = list(collapsed_summary_evaluation[col_name])
         idx_not_none = [i for i, _ in enumerate(Ptest) if Ptest[i] != None]
         Ptest = np.array([Ptest[i] for i in idx_not_none])
@@ -717,5 +760,45 @@ def main(evaluation_config: DictConfig):
         run_evaluation_repetition_evaluation(evaluation_config)
 
 
+def out_of_main():
+    # manually load the configuration file
+    PATH_TO_CONFIGURATION_FILE = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/conf/evaluation_config.yaml"
+    PATH_TO_REPETITION_FOLDER = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/T2_TESTs_20231231/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t162555"
+    SET_TO_EVALUATE = "test"
+
+    # load configuration file
+    evaluation_config = dict(OmegaConf.load(PATH_TO_CONFIGURATION_FILE))
+    # chake the model to run the evaluation
+    evaluation_config["path_to_repetition_folders"] = PATH_TO_REPETITION_FOLDER
+    # change the set to evaluate
+    evaluation_config["dataloader_settings"]["set_to_evaluate"] = SET_TO_EVALUATE
+
+    # get repetion folder
+    repetitions_to_evaluate = []
+    for repetition in glob.glob(
+        os.path.join(
+            evaluation_config["path_to_repetition_folders"],
+            "REPETITION_*",
+            "",
+        )
+    ):
+        repetitions_to_evaluate.append(repetition)
+    print(f"Found {len(repetitions_to_evaluate)} repetitions to work on...")
+
+    # run for all the repetitions
+    for repetition_folder in repetitions_to_evaluate:
+        evaluation_config["model_settings"][
+            "path_to_cross_validation_folder"
+        ] = repetition_folder
+
+        evaluation_config = set_up(evaluation_config)
+        print(
+            f'Worning on {evaluation_config["model_settings"]["path_to_cross_validation_folder"]}'
+        )
+        run_evaluation_repetition_evaluation(evaluation_config)
+
+
 if __name__ == "__main__":
     main()
+else:
+    out_of_main()

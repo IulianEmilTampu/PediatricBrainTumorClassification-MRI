@@ -538,6 +538,23 @@ def run_training(config: dict) -> None:
                 dataset_split_df.loc[
                     index_df_rows, "age_normalized"
                 ] = normalized_age.tolist()
+                # save nromalization values in the confoguration file
+                config["dataloader_settings"]["age_mean"] = age_mean
+                config["dataloader_settings"]["age_std"] = age_std
+
+                # save also the normalized test ages
+                index_df_rows = dataset_split_df.index[
+                    dataset_split_df[f"fold_{fold+1}"] == "test"
+                ].tolist()
+                test_ages_in_days = np.array(
+                    dataset_split_df.loc[dataset_split_df[f"fold_{fold+1}"] == "test"][
+                        "age_in_days"
+                    ]
+                )
+                test_ages_in_days_normalized = (test_ages_in_days - age_mean) / age_std
+                dataset_split_df.loc[
+                    index_df_rows, "age_normalized"
+                ] = test_ages_in_days_normalized.tolist()
         else:
             dataset_split_df["age_normalized"] = [None] * len(dataset_split_df)
 

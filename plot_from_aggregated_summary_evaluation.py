@@ -201,10 +201,13 @@ ORIGINAL_DF = ORIGINAL_DF.loc[ORIGINAL_DF.fine_tuning == 0.5]
 ORIGINAL_DF = ORIGINAL_DF.loc[ORIGINAL_DF.nbr_classes == 3]
 
 # MR sequence to use
-MR_SEQUENCE = "T2"
+MR_SEQUENCE = "ADC"
 # SET to look at
 EVALUATION_SET = "test"
 ORIGINAL_DF = ORIGINAL_DF.loc[ORIGINAL_DF.evaluation_set == EVALUATION_SET]
+# number of classes
+NBR_CLASSES = 3
+ORIGINAL_DF = ORIGINAL_DF.loc[ORIGINAL_DF.nbr_classes == NBR_CLASSES]
 
 # %% PLOT SLICE-WISE BOXPLOTS FOR THE DIFFERENT MDOEL VERSIONS USING AS GROUPING THE DIFFERENT PRE-TRAINING TYPES
 # Filter the dataframe to only get the metrics for the different folds of the repetitions on a slide level
@@ -1191,7 +1194,7 @@ subject_level_df = subject_level_df.assign(
     )
 )
 
-# tetrics to test
+# metrics to test
 metrics_to_test = {
     "overall_accuracy": "Accuracy",
     "overall_auc": "AUC",
@@ -1322,13 +1325,199 @@ SAVE_PATH = pathlib.Path(
     os.path.join(os.path.dirname(SUMMARY_FILE_PATH), "Summary_plots")
 )
 SAVE_PATH.mkdir(parents=True, exist_ok=True)
-DF = pd.read_csv(SUMMARY_FILE_PATH, low_memory=False)
+DETAILED_DF_ORIGINAL = pd.read_csv(SUMMARY_FILE_PATH, low_memory=False)
 
 # use model with 0.5 fine tuning
-DF = DF.loc[DF.fine_tuning == 0.5]
+DETAILED_DF_ORIGINAL = DETAILED_DF_ORIGINAL.loc[DETAILED_DF_ORIGINAL.fine_tuning == 0.5]
 
 # use only the values from the evaluation set
-ORIGINAL_DF = ORIGINAL_DF.loc[ORIGINAL_DF.evaluation_set == EVALUATION_SET]
+DETAILED_DF_ORIGINAL = DETAILED_DF_ORIGINAL.loc[
+    DETAILED_DF_ORIGINAL.evaluation_set == EVALUATION_SET
+]
+DETAILED_DF_ORIGINAL = DETAILED_DF_ORIGINAL.loc[
+    DETAILED_DF_ORIGINAL.nbr_classes == NBR_CLASSES
+]
+# make an easy to use string for the pretraining type
+DETAILED_DF_ORIGINAL = DETAILED_DF_ORIGINAL.assign(
+    pretraining_type_str=DETAILED_DF_ORIGINAL.apply(
+        lambda x: make_pretraining_type_string(x), axis=1
+    )
+)
+
+# %% COMPUTE THE CLASSIFICATION PERORMANCE WHEN USING THE PREDICTIONS FROM ALL THE AVAILABLE MR MODALITIES
+# HERE WE WORK ON A SUBJECT-LEVEL PREDICTION SINCE THE SLICES OF EACH MODALITY ARE NOT ALLIGNED.
+# EXPLORE HOW THE ADDITION OF MODEL-FOLDS AND MODEL-MODALITY CHANGES THE OVERALL PREDICTION.
+# WE CAN USE THE PLOT FUNCTIONS AS FROM BEFORE WITH THE ADDED TYPES OF MODELS (EG. RESNET50_T1_T2_ADC with the values for only the subject level prediction)
+
+# get the list of unique subject IDs for all the unique modalities
+unique_subjects_per_modality = [
+    list(
+        pd.unique(
+            DETAILED_DF_ORIGINAL.loc[DETAILED_DF_ORIGINAL.mr_sequence == mr_sequence][
+                "subject_IDs"
+            ]
+        )
+    )
+    for mr_sequence in pd.unique(DETAILED_DF_ORIGINAL.mr_sequence)
+]
+unique_overlapping_subjects = set.intersection(
+    *[set(list_) for list_ in unique_subjects_per_modality]
+)
+
+# %% THIS IS GOING TO BE MAJECTIS!
+"""
+Here we are getting the performance information as a variable of modality combination (1 to 3), percentage of models used for ensemble, and relative position of the slices 
+used for the subject ensemble.
+
+Steps:
+1 - Define which MR sequences are going to be used, along with the type of pretraining and if age is used.
+2 - Randomly select models from the pool of models trained.
+3 - For the overlapping subjects:
+    3.1 - Get the slices in the specified range
+    3.2 - average teh softmax scores for the classes for all the models and modalities
+4 - Predict subject class and compute overall performance
+5 - Save all into a dataframe for easy plotting
+6 - repeat from 2 to 5 N times to get a boxplot.
+"""
+from itertools import chain, combinations
+
+
+def powerset(iterable):
+    "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
+    s = list(iterable)
+    return chain.from_iterable(combinations(s, r) for r in range(len(s) + 1))
+
+
+def get_random_repetiton_fold_pair(
+    max_nbr_repetition, max_nbr_folds, nbr_pairs_to_create, starting_from: int = 1
+):
+    seen = set()
+    while len(seen) < nbr_pairs_to_create:
+        # create random pair
+        x, y = np.random.randint(starting_from, max_nbr_repetition), np.random.randint(
+            starting_from, max_nbr_folds
+        )
+        # add the pair if it is not duplicate
+        if not (x, y) in seen:
+            seen.add((x, y))
+    return list(seen)
+
+
+def replace_all(string, dict_for_replacement: dict = {" ": "", "[": "", "]": ""}):
+    for r, s in dict_for_replacement.items():
+        string = string.replace(r, s)
+    return string
+
+
+NUMBER_ORANDOM_SAMPLINGS = 1
+# PERCENTAGES_MODEL_POPULATION = [5, 25, 50, 75, 100]
+# RLP_RANGES = [[20, 80], [30, 70], [40, 60], [48, 52]]
+
+PERCENTAGES_MODEL_POPULATION = [5]
+RLP_RANGES = [[20, 80]]
+
+MR_SEQUENCES_AVAILABLE = list(pd.unique(DETAILED_DF_ORIGINAL.mr_sequence))
+MR_SEQUENCES_COMBINATIONS = list(powerset(MR_SEQUENCES_AVAILABLE))[1::]
+MR_SEQUENCES_COMBINATIONS = MR_SEQUENCES_COMBINATIONS[3:4]
+
+# other model selection criterias (these can be used to specify different model version for the different modalities and so on. For now we keep it simple)
+MODEL_VERSIONS = ["ResNet50"] * len(MR_SEQUENCES_COMBINATIONS)
+PRE_TRAINING_VERSIONS = ["ImageNet"] * len(MR_SEQUENCES_COMBINATIONS)
+USE_AGE = [False] * len(MR_SEQUENCES_COMBINATIONS)
+
+# start the looping
+for indx_n, n in enumerate(range(NUMBER_ORANDOM_SAMPLINGS)):
+    for mr_sequence_combination in MR_SEQUENCES_COMBINATIONS:
+        # get list of overlapping subjects
+        unique_subjects_per_modality = [
+            list(
+                pd.unique(
+                    DETAILED_DF_ORIGINAL.loc[
+                        DETAILED_DF_ORIGINAL.mr_sequence == mr_sequence
+                    ]["subject_IDs"]
+                )
+            )
+            for mr_sequence in mr_sequence_combination
+        ]
+        unique_overlapping_subjects = list(
+            set.intersection(*[set(list_) for list_ in unique_subjects_per_modality])
+        )
+        # initiate list that hold the infromation for plotting later
+        aus_df = []
+
+        # for each combination of mr sequence, model version and model selection critaria, get indexes from the pool of models
+        for mr_seq, model_version, pre_training, use_age in zip(
+            mr_sequence_combination, MODEL_VERSIONS, PRE_TRAINING_VERSIONS, USE_AGE
+        ):
+            for percentage_of_models in PERCENTAGES_MODEL_POPULATION:
+                # by default each model has 10 repetitions with 5 folds each. Randomly create tuples of repetition index fold index to
+                # select as many models as the percentage_of_models
+                nbr_models = int(50 * percentage_of_models / 100)
+                random_repetition_fold_indexes = get_random_repetiton_fold_pair(
+                    max_nbr_repetition=10 + 1,
+                    max_nbr_folds=5 + 1,
+                    nbr_pairs_to_create=nbr_models,
+                )
+
+                # for the unique overlapping subjects, get the subject softmax score obtained from the slices in the specified range.
+                for slice_range in RLP_RANGES:
+                    # this is the difficult part since we are filtering the datarfame with many conditions
+                    for indexes in random_repetition_fold_indexes:
+                        values = DETAILED_DF_ORIGINAL.loc[
+                            (DETAILED_DF_ORIGINAL.mr_sequence == mr_seq)
+                            & (DETAILED_DF_ORIGINAL.model_version == model_version)
+                            & (
+                                DETAILED_DF_ORIGINAL.pretraining_type_str
+                                == pre_training
+                            )
+                            & (DETAILED_DF_ORIGINAL.use_age == use_age)
+                            # subject ID filter
+                            & (
+                                DETAILED_DF_ORIGINAL.subject_IDs.isin(
+                                    unique_overlapping_subjects
+                                )
+                            )
+                            &
+                            # repetition filter
+                            (DETAILED_DF_ORIGINAL.repetition == indexes[0])
+                            &
+                            # filter based on the relative position
+                            (
+                                DETAILED_DF_ORIGINAL.tumor_relative_position
+                                >= slice_range[0]
+                            )
+                            & (
+                                DETAILED_DF_ORIGINAL.tumor_relative_position
+                                <= slice_range[1]
+                            )
+                        ].loc[
+                            :,
+                            [
+                                f"pred_fold_{indexes[1]}",
+                                "subject_IDs",
+                                "one_hot_encodig",
+                            ],
+                        ]
+                        # for some reason the values are strings, so convert to floats
+                        # the softmax values
+                        string_values = list(values[f"pred_fold_{indexes[1]}"])
+                        float_values = [
+                            np.array(replace_all(v).split(","), dtype=np.float32)
+                            for v in string_values
+                        ]
+                        values[f"pred_fold_{indexes[1]}"] = float_values
+
+                        # the one hot encoding values
+                        string_values = list(values["one_hot_encodig"])
+                        float_values = [
+                            np.array(replace_all(v).split(","), dtype=np.float32)
+                            for v in string_values
+                        ]
+                        values[f"one_hot_encodig"] = float_values
+                        # take the mean softmax across the slices for each subject separately
+                        values = values.groupby("subject_IDs").mean()
+                        # get metrics and save
+
 
 # %% PLOT THE PER MODEL (with and withouth age), PER-FOLD AND PER CLASS ENTROPY -
 # THIS IS A PER-SUBJECT EVALUATION SINCE WE ARE

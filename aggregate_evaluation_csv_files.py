@@ -9,9 +9,8 @@ from datetime import datetime
 # %%
 SOURCE = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208"
 SAVE_PATH = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/validation_results"
-pathlib.Path(
-    os.path.join(SAVE_PATH, f'Evaluation_{datetime.now().strftime("%Y%m%d")}')
-).mkdir(parents=True, exist_ok=True)
+SAVE_PATH = os.path.join(SAVE_PATH, f'Evaluation_{datetime.now().strftime("%Y%m%d")}')
+pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
 
 # %% GATHER CVS FILES (summary evaluation and detailed evaluation)
 summary_evaluation = []
@@ -35,18 +34,21 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                         if os.path.isfile(csv_file):
                             # load CSV
                             df = pd.read_csv(csv_file)
-                            # add the set information
-                            df["evaluation_set"] = [set_name] * len(df)
                             # add extra information to the dataframe
+                            df["mr_sequence"] = training_config.dataset.modality
+                            df["evaluation_set"] = set_name
+
                             df[
                                 "model_version"
                             ] = training_config.model_settings.model_version
+
                             df["use_age"] = (
                                 training_config.dataloader_settings.use_age
                                 if "use_age"
                                 in training_config.dataloader_settings.keys()
                                 else False
                             )
+
                             df["test_date"] = (
                                 training_config.logging_settings.start_day
                                 if "start_day"
@@ -55,9 +57,11 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                                     os.path.dirname(pathlib.Path(m))
                                 ).split("_")[-1]
                             )
+
                             df[
                                 "time_stamp"
                             ] = training_config.logging_settings.start_time
+
                             df["pretraining"] = (
                                 training_config.model_settings.use_SimCLR_pretrained_model
                                 if "use_SimCLR_pretrained_model"
@@ -101,7 +105,7 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                             count += 1
                         else:
                             print(
-                                f"Missing {version} file for model {os.path.basename(t)}, {os.path.basename(r)}"
+                                f"Missing {version:23s} file for set {set_name}, model {os.path.basename(os.path.dirname(t))}, {os.path.basename(os.path.dirname(r))}"
                             )
 print(f"Found {count} files.")
 
@@ -110,6 +114,7 @@ colunms_ordered = [
     "test_date",
     "time_stamp",
     "model_version",
+    "mr_sequence",
     "nbr_classes",
     "classes",
     "pretraining",
@@ -148,6 +153,7 @@ colunms_ordered = [
     "test_date",
     "time_stamp",
     "model_version",
+    "mr_sequence",
     "nbr_classes",
     "classes",
     "pretraining",
@@ -198,3 +204,4 @@ df.to_csv(
     index=False,
     index_label=False,
 )
+# %%

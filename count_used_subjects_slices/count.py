@@ -6,6 +6,7 @@ for all the modalities, along with the number of male, female, NA and their age.
 
 import os
 import pandas as pd
+import numpy as np
 
 # %% SOURCE FILES
 
@@ -25,6 +26,8 @@ summary_df = []
 for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.items():
     # load the split information
     split_information = pd.read_csv(split_information_file)
+    # NOTE! Very important to order based on subject ID since unique and group by do not do that, thus the values are not aligned.
+    split_information = split_information.sort_values(by=["subject_IDs"])
     # get the unique subject IDs
     unique_subjectIDs = list(pd.unique(split_information.subject_IDs))
     # get slice count
@@ -60,34 +63,111 @@ for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.item
 
     # all the information now is available. Build new DF for counting
     df = pd.DataFrame(
-        data=[unique_subjectIDs, gender, age, diagnosis, slices_per_subject, [modality_name]*len(unique_subjectIDs)]
+        data=[
+            unique_subjectIDs,
+            gender,
+            age,
+            diagnosis,
+            slices_per_subject,
+            [modality_name] * len(unique_subjectIDs),
+        ]
     ).transpose()
-    df.columns = ["subject_IDs", "gender", "age_in_days", "diagnosis", "nbr_slices", 'mr_sequence']
+    df.columns = [
+        "subject_IDs",
+        "gender",
+        "age_in_days",
+        "diagnosis",
+        "nbr_slices",
+        "mr_sequence",
+    ]
 
     # save
     summary_df.append(df)
 
 summary_df = pd.concat(summary_df)
 
-# %% COUNT 
-# DIAGNOSTIC LEVEL FIRST 
-for diagnosis in list(pd.unique(summary_df.diagnosis)):
-    print(f'Diagnosis: {diagnosis}')
+# %% COUNT
+
+# DIAGNOSTIC LEVEL FIRST
+for diagnosis in ["ASTROCYTOMA", "EPENDYMOMA", "MEDULLOBLASTOMA"]:
     # SUBJECT LEVEL INFORMATION
-    df = summary_df.loc[summary_df.diagnosis==diagnosis]
+    df = summary_df.loc[summary_df.diagnosis == diagnosis]
     indent = 4
-    print(f'{" "*indent:s}{len(pd.unique(df.subject_IDs))} unique subjects. Age (in years) {}')
-    print(f'{" "*indent:s}F/M/NA subjects {"/".join([str(v) for v in list(df.groupby(["gender"]).count()["subject_IDs"])])}')
-    print(f'{" "*indent:s}F/M/NA slices {"/".join([str(v) for v in list(df.groupby(["gender"]).count()["nbr_slices"])])}')
-    # age 
-    print(f'{" "*indent:s}{len(pd.unique(df.subject_IDs))} unique subjects.')
+    nbr_subjects = len(pd.unique(df.subject_IDs))
+    gender_count = list(df.groupby(["gender"]).nunique()["subject_IDs"])
+    males, females, NAs = (
+        gender_count[1],
+        gender_count[0],
+        gender_count[2] if len(gender_count) == 3 else 0,
+    )
+    age_median, age_min, age_max, age_mean, age_std = (
+        np.median(df.age_in_days) / 365,
+        np.min(df.age_in_days) / 365,
+        np.max(df.age_in_days) / 365,
+        np.mean(df.age_in_days) / 365,
+        np.std(df.age_in_days) / 365,
+    )
+
+    print(f"{diagnosis}")
+    indent = 4
+    print(
+        f"{' '*indent:s}{nbr_subjects} subjects. (M/F/NA) {'/'.join([str(v) for v in [males, females, NAs]])}"
+    )
+    print(
+        f"{' '*indent:s}Age: (median [min, max]): {age_median:0.2f} [{age_min:0.2f}, {age_max:0.2f}]"
+    )
+    print(f"{' '*indent:s}Age: (mean +- std): {age_mean:0.2f} +- {age_std:0.2f}")
+
+    for mr_sequence in ["T2", "T1", "ADC"]:
+        indent = 4
+        print(f"{' '*indent:s}{mr_sequence}")
+        indent = 8
+        df_seq = df.loc[df.mr_sequence == mr_sequence]
+        nbr_subjects_sequence = len(pd.unique(df_seq.subject_IDs))
+        nbr_slices = np.sum(df_seq.nbr_slices)
+        print(f"{' '*indent:s}{nbr_subjects_sequence} subjects")
+        print(f"{' '*indent:s}{nbr_slices} slices")
+
+    print("\n")
 
 
-    # # start counting 
-    # print(f'Modality {modality_name}')
-    # # count unique subjects, number of male, female and NaN
-    # indent = 4
-    # print(f'{" "*indent:s}{len(unique_subjectIDs)} unique subjects.')
-    # print(f'{" "*indent:s}F/M/NA subjects {"/".join([str(v) for v in list(df.groupby(["gender"]).count()["subject_IDs"])])}')
-    # print(f'{" "*indent:s}F/M/NA slices {"/".join([str(v) for v in list(df.groupby(["gender"]).count()["nbr_slices"])])}')
+# %%
+print("\nTOTALS")
+
+# TOTALS
+nbr_subjects = len(pd.unique(summary_df.subject_IDs))
+gender_count = list(summary_df.groupby(["gender"]).nunique()["subject_IDs"])
+males, females, NAs = (
+    gender_count[1],
+    gender_count[0],
+    gender_count[2] if len(gender_count) == 3 else 0,
+)
+age_median, age_min, age_max, age_mean, age_std = (
+    np.median(summary_df.age_in_days) / 365,
+    np.min(summary_df.age_in_days) / 365,
+    np.max(summary_df.age_in_days) / 365,
+    np.mean(summary_df.age_in_days) / 365,
+    np.std(summary_df.age_in_days) / 365,
+)
+
+print(
+    f"{' '*indent:s}{nbr_subjects} subjects. (M/F/NA) {'/'.join([str(v) for v in [males, females, NAs]])}"
+)
+print(
+    f"{' '*indent:s}Age: (median [min, max]): {age_median:0.2f} [{age_min:0.2f}, {age_max:0.2f}]"
+)
+print(f"{' '*indent:s}Age: (mean +- std): {age_mean:0.2f} +- {age_std:0.2f}")
+
+print("\n")
+for mr_sequence in ["T2", "T1", "ADC"]:
+    indent = 4
+    print(f"{' '*indent:s}{mr_sequence}")
+    indent = 8
+    df_seq = summary_df.loc[summary_df.mr_sequence == mr_sequence]
+    nbr_subjects_sequence = len(pd.unique(df_seq.subject_IDs))
+    nbr_slices = np.sum(df_seq.nbr_slices)
+    print(f"{' '*indent:s}{nbr_subjects_sequence} subjects")
+    print(f"{' '*indent:s}{nbr_slices} slices")
+
+
 # %%

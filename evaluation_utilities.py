@@ -6,6 +6,23 @@ import matplotlib.colors as colors
 from sklearn.metrics import confusion_matrix
 
 
+def get_confusion_matrix(GT, PRED):
+    """
+    GT and PRED are supposed to be categorical (or logits for the prediction)
+    """
+    GT = GT.argmax(axis=-1)
+    PRED = PRED.argmax(axis=-1)
+    nbr_classes = GT.max() + 1
+    nbr_samples = GT.shape[0]
+    cm = np.zeros((nbr_classes, nbr_classes))
+
+    for s in range(nbr_samples):
+        t_idx = GT[s]
+        p_idx = PRED[s]
+        cm[t_idx, p_idx] += 1
+    return cm
+
+
 def plotModelPerformance_v2(
     tr_loss, tr_acc, val_loss, val_acc, save_path, display=False, best_epoch=None
 ):
@@ -113,23 +130,13 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
     OUTPUT
     metrics_dict : dictionary
     """
-    # compute confusion matrix
-    cnf_matrix = confusion_matrix(
-        np.argmax(true_logits, axis=-1), np.argmax(pred_softmax, axis=-1)
-    )
-
-    # get TP, TN, FP, FN
-    FP = (cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)).astype(float)
-    FN = (cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)).astype(float)
-    TP = (np.diag(cnf_matrix)).astype(float)
-    TN = (cnf_matrix.sum() - (FP + FN + TP)).astype(float)
-
     # there might be cases where one of the classes does not have any sample in the true_logits. If this is the case
     # roc_curve and subsequent auc calculation will complain. Thus check this, save the index of the class with no
     # positive evidence and add a None value in the AUC computation
     index_class_with_no_positive_evidence = [
         i for i in range(true_logits.shape[-1]) if true_logits[:, i].sum() == 0
     ]
+
     if len(index_class_with_no_positive_evidence):
         adjusted_true_logits = np.delete(
             true_logits, index_class_with_no_positive_evidence, 1
@@ -141,27 +148,40 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
         adjusted_true_logits = true_logits
         adjusted_pred_softmax = pred_softmax
 
+    # compute confusion matrix
+    cnf_matrix = get_confusion_matrix(
+        true_logits,
+        pred_softmax,
+    )
+
+    # get TP, TN, FP, FN
+    FP = (cnf_matrix.sum(axis=0) - np.diag(cnf_matrix)).astype(float)
+    FN = (cnf_matrix.sum(axis=1) - np.diag(cnf_matrix)).astype(float)
+    TP = (np.diag(cnf_matrix)).astype(float)
+    TN = (cnf_matrix.sum() - (FP + FN + TP)).astype(float)
+
     # compute class metrics
     fpr, tpr, _ = roc_curve(
         adjusted_true_logits.argmax(axis=-1) + 1,
         adjusted_pred_softmax.argmax(axis=-1) + 1,
         pos_label=np.unique(adjusted_true_logits.argmax(axis=-1)).size,
     )
+    precision = np.array(TN / (FP + TN))
+    recall = np.array(TP / (TP + FN))
+    accuracy = np.array((TP + TN) / (TP + TN + FP + FN))
+    f1score = np.array(TP / (TP + 0.5 * (FP + FN)))
+
+    # set to None the class that does not have any positive evidence
+    precision[index_class_with_no_positive_evidence] = None
+    recall[index_class_with_no_positive_evidence] = None
+    accuracy[index_class_with_no_positive_evidence] = None
+    f1score[index_class_with_no_positive_evidence] = None
+
     summary_dict = {
-        "precision": np.insert(
-            (TN / (FP + TN)), index_class_with_no_positive_evidence, None
-        ),
-        "recall": np.insert(
-            (TP / (TP + FN)), index_class_with_no_positive_evidence, None
-        ),
-        "accuracy": np.insert(
-            ((TP + TN) / (TP + TN + FP + FN)),
-            index_class_with_no_positive_evidence,
-            None,
-        ),
-        "f1-score": np.insert(
-            (TP / (TP + 0.5 * (FP + FN))), index_class_with_no_positive_evidence, None
-        ),
+        "precision": precision,
+        "recall": recall,
+        "accuracy": accuracy,
+        "f1-score": f1score,
         "auc": auc(fpr, tpr),
     }
 
@@ -169,15 +189,14 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
     summary_dict["overall_precision"] = average_precision_score(
         adjusted_true_logits, adjusted_pred_softmax, average=average
     )
-
     summary_dict["overall_recall"] = recall_score(
-        np.argmax(true_logits, axis=-1),
-        np.argmax(pred_softmax, axis=-1),
+        np.argmax(adjusted_true_logits, axis=-1),
+        np.argmax(adjusted_pred_softmax, axis=-1),
         average=average,
     )
     summary_dict["overall_accuracy"] = accuracy_score(
-        np.argmax(true_logits, axis=-1),
-        np.argmax(pred_softmax, axis=-1),
+        np.argmax(adjusted_true_logits, axis=-1),
+        np.argmax(adjusted_pred_softmax, axis=-1),
     )
     summary_dict["overall_f1-score"] = f1_score(
         np.argmax(adjusted_true_logits, axis=-1),
@@ -209,14 +228,9 @@ def plotConfusionMatrix(
     """
     Funtion that plots the confision matrix given the ground truths and the predictions
     """
-    # convert from categorical if GT and PRED are categorical
-    if isinstance(GT[0], (list, np.ndarray)):
-        GT = GT.argmax(axis=-1)
-    if isinstance(PRED[0], (list, np.ndarray)):
-        PRED = PRED.argmax(axis=-1)
-
     # compute confusion matrix
-    cm = confusion_matrix(GT, PRED)
+    cm = get_confusion_matrix(GT, PRED)
+
     fig = plt.figure(figsize=(10, 10))
     plt.imshow(cm, interpolation=None, cmap=cmap)
     # plt.colorbar()
@@ -242,7 +256,7 @@ def plotConfusionMatrix(
     plt.xlabel("Prediction", fontsize=15)
 
     acc = 100 * (np.trace(cm) / np.sum(cm))
-    mcc = matthews_corrcoef(GT, PRED)
+    mcc = matthews_corrcoef(GT.argmax(axis=-1), PRED.argmax(axis=-1))
     plt.title(f"Accuracy: {acc:03.2f}, MCC: {mcc:3.2f}", fontsize=20)
     fig.tight_layout()
 
@@ -289,9 +303,9 @@ def plotROC(GT, PRED, classes, savePath=None, saveName=None, draw=False):
     GT : array
         True labels
     PRED : array
-        aRRAY of float the identifies the logits prediction
+        Array of float the identifies the logits prediction
     classes : list
-        lIST of string that identifies the labels of each class
+        List of string that identifies the labels of each class
     save path : string
         Identifies the path where to save the ROC plots
     save name : string
@@ -313,20 +327,35 @@ def plotROC(GT, PRED, classes, savePath=None, saveName=None, draw=False):
     Here computing both the macro-average ROC and the micro-average ROC.
     Using code from https://scikit-learn.org/dev/auto_examples/model_selection/plot_roc.html with modification
     """
+    # handle the case where there are no positive evidence for a class
+    index_class_with_no_positive_evidence = [
+        i for i in range(GT.shape[-1]) if GT[:, i].sum() == 0
+    ]
+
+    if len(index_class_with_no_positive_evidence):
+        adjusted_GT = np.delete(GT, index_class_with_no_positive_evidence, 1)
+        adjusted_PRED = np.delete(PRED, index_class_with_no_positive_evidence, 1)
+    else:
+        adjusted_GT = GT
+        adjusted_PRED = PRED
+
     # define variables
     fpr = dict()
     tpr = dict()
     roc_auc = dict()
+    classes = list(np.delete(classes, index_class_with_no_positive_evidence, 0))
     n_classes = len(classes)
     lw = 2  # line width
 
     # ¤¤¤¤¤¤¤¤¤¤¤ micro-average roc
     for i in range(n_classes):
-        fpr[i], tpr[i], _ = roc_curve(GT[:, i], PRED[:, i])
+        fpr[i], tpr[i], _ = roc_curve(adjusted_GT[:, i], adjusted_PRED[:, i])
         roc_auc[i] = auc(fpr[i], tpr[i])
 
     # Compute micro-average ROC curve and ROC area
-    fpr["micro"], tpr["micro"], _ = roc_curve(GT.ravel(), PRED.ravel())
+    fpr["micro"], tpr["micro"], _ = roc_curve(
+        adjusted_GT.ravel(), adjusted_PRED.ravel()
+    )
     roc_auc["micro"] = auc(fpr["micro"], tpr["micro"])
 
     # ¤¤¤¤¤¤¤¤¤¤ macro-average roc
@@ -528,34 +557,57 @@ def plotPR(GT, PRED, classes, savePath=None, saveName=None, draw=False):
     - average_precision: float of the average precision
     - F1: dictionare containing the micro and marco average f1-score
     """
+    # handle the case where there are no positive evidence for a class
+    index_class_with_no_positive_evidence = [
+        i for i in range(GT.shape[-1]) if GT[:, i].sum() == 0
+    ]
+
+    if len(index_class_with_no_positive_evidence):
+        adjusted_GT = np.delete(GT, index_class_with_no_positive_evidence, 1)
+        adjusted_PRED = np.delete(PRED, index_class_with_no_positive_evidence, 1)
+    else:
+        adjusted_GT = GT
+        adjusted_PRED = PRED
+
     # define variables
     precision = dict()
     recall = dict()
     average_precision = dict()
+    classes = list(np.delete(classes, index_class_with_no_positive_evidence, 0))
     n_classes = len(classes)
     lw = 2  # line width
 
     # ¤¤¤¤¤¤¤¤¤¤¤ f1_score
     F1 = {
         "micro": f1_score(
-            np.argmax(GT, axis=-1), np.argmax(PRED, axis=-1), average="micro"
+            np.argmax(adjusted_GT, axis=-1),
+            np.argmax(adjusted_PRED, axis=-1),
+            average="micro",
         ),
         "macro": f1_score(
-            np.argmax(GT, axis=-1), np.argmax(PRED, axis=-1), average="macro"
+            np.argmax(adjusted_GT, axis=-1),
+            np.argmax(adjusted_PRED, axis=-1),
+            average="macro",
         ),
     }
     # print('F1-score (micro and macro): {0:0.2f} and {0:0.2f}'.format(F1['micro'], F1['macro']))
 
     # ¤¤¤¤¤¤¤¤¤¤¤ micro-average roc
     for i in range(n_classes):
-        precision[i], recall[i], _ = precision_recall_curve(GT[:, i], PRED[:, i])
-        average_precision[i] = average_precision_score(GT[:, i], PRED[:, i])
+        precision[i], recall[i], _ = precision_recall_curve(
+            adjusted_GT[:, i], adjusted_PRED[:, i]
+        )
+        average_precision[i] = average_precision_score(
+            adjusted_GT[:, i], adjusted_PRED[:, i]
+        )
 
     # Compute micro-average ROC curve and ROC area
     precision["micro"], recall["micro"], _ = precision_recall_curve(
-        GT.ravel(), PRED.ravel()
+        adjusted_GT.ravel(), adjusted_PRED.ravel()
     )
-    average_precision["micro"] = average_precision_score(GT, PRED, average="micro")
+    average_precision["micro"] = average_precision_score(
+        adjusted_GT, adjusted_PRED, average="micro"
+    )
     # print('Average precision score, micro-averaged over all classes: {0:0.2f}'
     #  .format(average_precision["micro"]))
 

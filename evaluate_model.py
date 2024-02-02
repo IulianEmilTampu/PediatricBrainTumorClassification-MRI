@@ -43,6 +43,8 @@ import pytorch_lightning as pl
 
 # local imports
 import dataset_utilities
+import evaluation_utilities
+
 
 pl.seed_everything(42)
 
@@ -118,9 +120,9 @@ def set_up(evaluation_config):
         os.path.basename(Path(aus_repetition_path))
     )
 
-    evaluation_config["dataloader_settings"][
-        "path_to_data_split_csv_file"
-    ] = os.path.join(aus_repetition_path, "data_split_information.csv")
+    evaluation_config["dataloader_settings"]["path_to_data_split_csv_file"] = (
+        os.path.join(aus_repetition_path, "data_split_information.csv")
+    )
 
     evaluation_config["dataloader_settings"]["preprocessing_settings"]["input_size"] = (
         training_config["dataloader_settings"]["input_size"]
@@ -162,6 +164,8 @@ def set_up(evaluation_config):
         else False
     )
 
+    evaluation_config["dataset_information"] = training_config["dataset"]
+
     # ------------------------
     # Run check on the folder
     # -----------------------
@@ -181,7 +185,7 @@ def set_up(evaluation_config):
 
 
 def run_evaluation_repetition_evaluation(config: dict):
-    # %%GET FILES, SET UP LABEL DICTIONARY MAP and the pre-processing transform
+    #  % GET FILES, SET UP LABEL DICTIONARY MAP and the pre-processing transform
     # load .csv file
     print(
         f'Dataset split path: {f"{os.path.sep}".join((Path(config["dataloader_settings"]["path_to_data_split_csv_file"]).parts[-3::]))}'
@@ -193,6 +197,51 @@ def run_evaluation_repetition_evaluation(config: dict):
         dataset_split = dataset_split.drop(columns=["level_0", "index"])
     except:
         print()
+
+    # check that the paths to the data files are valid (might be that the model has been trained on a different machine, thus the
+    # path to the dataset is not the same)
+
+    if not os.path.isfile(dataset_split["fold_1"][0]):
+        print("Changing file path to match the local dataset location.")
+        # need to re-map the file paths to match the dataset location on this computer
+        # Get dataset information from the dataset_information field.
+
+        classes_long_name_to_short = {
+            "ASTROCYTOMA": "ASTR",
+            "EPENDYMOMA": "EP",
+            "MEDULLOBLASTOMA": "MED",
+        }
+
+        classes_string = "_".join(
+            [
+                classes_long_name_to_short[c]
+                for c in list(config["dataset_information"]["classes_of_interest"])
+            ]
+        )
+
+        # get file path from the dataset configuration file for this dataset
+        path_to_local_yaml_dataset_configuration_file = os.path.join(
+            config["path_to_dataset_configuration_files"],
+            "_".join(
+                [
+                    config["dataset_information"]["modality"],
+                    config["dataset_information"]["name"],
+                    classes_string,
+                ]
+            )
+            + ".yaml",
+        )
+        # load .yaml and get path to the dataset
+        local_dataset_info = OmegaConf.load(
+            path_to_local_yaml_dataset_configuration_file
+        )
+        path_to_local_dataset = local_dataset_info["dataset_path"]
+        dataset_split[f"file_path"] = dataset_split.apply(
+            lambda x: os.path.join(
+                path_to_local_dataset, os.path.basename(x[f"file_path"])
+            ),
+            axis=1,
+        )
 
     # get mapping of the classes to one hot encoding
     unique_targe_classes = dict.fromkeys(pd.unique(dataset_split["target"]))
@@ -248,7 +297,7 @@ def run_evaluation_repetition_evaluation(config: dict):
             f"Fold {m['fold_nbr']}\n  Last model: {True if m['last'] else None}\n  Best model: {True if m['best'] else None}"
         )
 
-    #  %% GET EVALUATION PERFORMANCE ON A SLICE LEVEL
+    #  % GET EVALUATION PERFORMANCE ON A SLICE LEVEL
     # Here we can save all the information in a dataframe so that future manipulations are easy to perform.
     # The dataframe stores the subject_ID, the class, the file name and the performance for each model in columns MF_1, MF_2, etc.
     # What is saved are the logits (not softmax) scores as outputed from the model for each of the classes.
@@ -316,9 +365,9 @@ def run_evaluation_repetition_evaluation(config: dict):
                     )
                     # normalize and save age values
                     test_ages_normalized = (test_ages - age_mean) / age_std
-                    files_for_inference.loc[
-                        :, "age_normalized"
-                    ] = test_ages_normalized.tolist()
+                    files_for_inference.loc[:, "age_normalized"] = (
+                        test_ages_normalized.tolist()
+                    )
 
                     # pint(files_for_inference)
                 # build generator on these files
@@ -330,12 +379,14 @@ def run_evaluation_repetition_evaluation(config: dict):
                         return_file_path=False,
                         return_age=config["dataloader_settings"]["use_age"],
                         ages=(
-                            list(files_for_inference["age_normalized"])
-                            if config["dataloader_settings"]["normalize_age"]
-                            else list(files_for_inference["age_in_days"])
-                        )
-                        if config["dataloader_settings"]["use_age"]
-                        else None,
+                            (
+                                list(files_for_inference["age_normalized"])
+                                if config["dataloader_settings"]["normalize_age"]
+                                else list(files_for_inference["age_in_days"])
+                            )
+                            if config["dataloader_settings"]["use_age"]
+                            else None
+                        ),
                     ),
                     batch_size=32,
                     num_workers=15,
@@ -372,7 +423,7 @@ def run_evaluation_repetition_evaluation(config: dict):
 
     print("\n")
 
-    # %% WORK ON THE DATAFRAMES
+    # % WORK ON THE DATAFRAMES
     # stack the dataframes
     concatenated_summary_evaluation = pd.concat(
         summary_evaluation, axis=0, ignore_index=True
@@ -385,7 +436,7 @@ def run_evaluation_repetition_evaluation(config: dict):
     # set the subject_IDs as indexes
     collapsed_summary_evaluation = collapsed_summary_evaluation.set_index("subject_IDs")
 
-    # %% WORK ON THE SLICE LEVEL AGGREGATIONS
+    # % WORK ON THE SLICE LEVEL AGGREGATIONS
     def ensamble_predictions(pd_slice_row, nbr_predictive_models):
         # this function ensambles the predictions for a single slide over the different folds in the collased summary evaluation dataframe
 
@@ -416,19 +467,19 @@ def run_evaluation_repetition_evaluation(config: dict):
         return uncertainty
 
     # compute ensemble
-    collapsed_summary_evaluation[
-        "per_slice_ensemble"
-    ] = collapsed_summary_evaluation.apply(
-        lambda x: ensamble_predictions(x, len(MODELS)), axis=1
+    collapsed_summary_evaluation["per_slice_ensemble"] = (
+        collapsed_summary_evaluation.apply(
+            lambda x: ensamble_predictions(x, len(MODELS)), axis=1
+        )
     )
     # compute uncertainty
-    collapsed_summary_evaluation[
-        "per_slice_per_class_uncertainty"
-    ] = collapsed_summary_evaluation.apply(
-        lambda x: per_slice_per_class_uncertainty(x, len(MODELS)), axis=1
+    collapsed_summary_evaluation["per_slice_per_class_uncertainty"] = (
+        collapsed_summary_evaluation.apply(
+            lambda x: per_slice_per_class_uncertainty(x, len(MODELS)), axis=1
+        )
     )
 
-    # %% WORK ON THE PATIENT LEVEL AGGREGATIONS
+    # % WORK ON THE PATIENT LEVEL AGGREGATIONS
     # This is a little bit nasty since, in the case of training and validation, there are subjects that are only used in one of the folds.
     # Thus, need to account for the None values and substitute such that the plotting and following code works.
     def proces_subject_wise_predictions(
@@ -541,15 +592,14 @@ def run_evaluation_repetition_evaluation(config: dict):
         prefix="overall_subject_entropy",
     )
 
-    # %% INITIATE DICT FOR SUMMARY PERFOMANCE TO CSV
+    # % INITIATE DICT FOR SUMMARY PERFOMANCE TO CSV
     # this holds the dictionaries from the evaluation_utilities.get_performance_metrics for all the configurations:
     # - per fold slice wise
     # - per slice ensemble across folds
     # - per subject slice wise
     # -per subject across folds and slices ensembles
     summary_performance = []
-    # %% PLOT SLICE-WISE RESULTS
-    import evaluation_utilities
+    # % PLOT SLICE-WISE RESULTS
 
     importlib.reload(evaluation_utilities)
 
@@ -600,6 +650,11 @@ def run_evaluation_repetition_evaluation(config: dict):
         )
         aus_dict["performance_over"] = col_name
 
+        # expand the per_class analysis so that it is easier later on to get the per_class values
+        for metric in ["accuracy", "precision", "recall", "f1-score"]:
+            for idc, class_name in enumerate(aus_dict["classes"]):
+                aus_dict[f"{metric}_{class_name}"] = aus_dict[metric][idc]
+
         # save
         summary_performance.append(aus_dict)
 
@@ -631,7 +686,7 @@ def run_evaluation_repetition_evaluation(config: dict):
             draw=False,
         )
 
-    # %% PLOT SUBJECT LEVEL METRICS
+    # % PLOT SUBJECT LEVEL METRICS
     col_names = [
         col
         for col in collapsed_summary_evaluation
@@ -668,6 +723,8 @@ def run_evaluation_repetition_evaluation(config: dict):
             Ytest_categorical, Ptest_softmax
         )
 
+        print(aus_dict)
+
         # add general information
         aus_dict["model_version"] = "_".join(
             [
@@ -688,10 +745,16 @@ def run_evaluation_repetition_evaluation(config: dict):
         )
         aus_dict["performance_over"] = col_name
 
+        # expand the per_class analysis so that it is easier later on to get the per_class values
+        for metric in ["accuracy", "precision", "recall", "f1-score"]:
+            for idc, class_name in enumerate(aus_dict["classes"]):
+                aus_dict[f"{metric}_{class_name}"] = aus_dict[metric][idc]
+
         # save
         summary_performance.append(aus_dict)
 
         # plot metrics
+        print("Plotting CM")
         evaluation_utilities.plotConfusionMatrix(
             GT=Ytest_categorical,
             PRED=Ptest_softmax,
@@ -719,8 +782,7 @@ def run_evaluation_repetition_evaluation(config: dict):
             draw=False,
         )
 
-    # %% SAVE PANDAS TO FILEs
-
+    # % SAVE PANDAS TO FILEs
     collapsed_summary_evaluation.to_csv(
         os.path.join(config["save_path"], "full_evaluation.csv")
     )
@@ -729,13 +791,48 @@ def run_evaluation_repetition_evaluation(config: dict):
     df = pd.DataFrame(summary_performance)
     df.to_csv(os.path.join(config["save_path"], "summary_performance.csv"))
 
+    # debug
+    return Ytest_categorical, Ptest_softmax
+
+# # %% OUTSIDE MAIN
+
+# PATH_TO_CONFIG_HYDRA = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/conf/evaluation_config.yaml"
+# evaluation_config = dict(OmegaConf.load(PATH_TO_CONFIG_HYDRA))
+
+# # get repetition folder
+# repetitions_to_evaluate = []
+# for repetition in glob.glob(
+#     os.path.join(
+#         evaluation_config["path_to_repetition_folders"],
+#         "REPETITION_*",
+#         "",
+#     )
+# ):
+#     repetitions_to_evaluate.append(repetition)
+# print(f"Found {len(repetitions_to_evaluate)} repetitions to work on...")
+
+# # run for all the repetitions
+# for repetition_folder in repetitions_to_evaluate:
+#     evaluation_config["model_settings"][
+#         "path_to_cross_validation_folder"
+#     ] = repetition_folder
+
+#     if "REPETITION_9" in repetition_folder:
+#         evaluation_config = set_up(evaluation_config)
+#         print(
+#             f'Working on {evaluation_config["model_settings"]["path_to_cross_validation_folder"]}'
+#         )
+#         Ytest_categorical, Ptest_softmax = run_evaluation_repetition_evaluation(
+#             evaluation_config
+#         )
+
 
 # %% MAIN
 @hydra.main(version_base=None, config_path="conf", config_name="evaluation_config")
 def main(evaluation_config: DictConfig):
     evaluation_config = dict(evaluation_config)
 
-    # get repetion folder
+    # get repetition folder
     repetitions_to_evaluate = []
     for repetition in glob.glob(
         os.path.join(
@@ -755,50 +852,10 @@ def main(evaluation_config: DictConfig):
 
         evaluation_config = set_up(evaluation_config)
         print(
-            f'Worning on {evaluation_config["model_settings"]["path_to_cross_validation_folder"]}'
-        )
-        run_evaluation_repetition_evaluation(evaluation_config)
-
-
-def out_of_main():
-    # manually load the configuration file
-    PATH_TO_CONFIGURATION_FILE = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/conf/evaluation_config.yaml"
-    PATH_TO_REPETITION_FOLDER = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/T2_TESTs_20231231/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t162555"
-    SET_TO_EVALUATE = "test"
-
-    # load configuration file
-    evaluation_config = dict(OmegaConf.load(PATH_TO_CONFIGURATION_FILE))
-    # chake the model to run the evaluation
-    evaluation_config["path_to_repetition_folders"] = PATH_TO_REPETITION_FOLDER
-    # change the set to evaluate
-    evaluation_config["dataloader_settings"]["set_to_evaluate"] = SET_TO_EVALUATE
-
-    # get repetion folder
-    repetitions_to_evaluate = []
-    for repetition in glob.glob(
-        os.path.join(
-            evaluation_config["path_to_repetition_folders"],
-            "REPETITION_*",
-            "",
-        )
-    ):
-        repetitions_to_evaluate.append(repetition)
-    print(f"Found {len(repetitions_to_evaluate)} repetitions to work on...")
-
-    # run for all the repetitions
-    for repetition_folder in repetitions_to_evaluate:
-        evaluation_config["model_settings"][
-            "path_to_cross_validation_folder"
-        ] = repetition_folder
-
-        evaluation_config = set_up(evaluation_config)
-        print(
-            f'Worning on {evaluation_config["model_settings"]["path_to_cross_validation_folder"]}'
+            f'Working on {evaluation_config["model_settings"]["path_to_cross_validation_folder"]}'
         )
         run_evaluation_repetition_evaluation(evaluation_config)
 
 
 if __name__ == "__main__":
     main()
-else:
-    out_of_main()

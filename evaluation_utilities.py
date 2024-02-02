@@ -90,7 +90,6 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
         roc_curve,
         auc,
         roc_auc_score,
-        roc_curve,
         f1_score,
         accuracy_score,
         matthews_corrcoef,
@@ -125,24 +124,52 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
     TP = (np.diag(cnf_matrix)).astype(float)
     TN = (cnf_matrix.sum() - (FP + FN + TP)).astype(float)
 
+    # there might be cases where one of the classes does not have any sample in the true_logits. If this is the case
+    # roc_curve and subsequent auc calculation will complain. Thus check this, save the index of the class with no
+    # positive evidence and add a None value in the AUC computation
+    index_class_with_no_positive_evidence = [
+        i for i in range(true_logits.shape[-1]) if true_logits[:, i].sum() == 0
+    ]
+    if len(index_class_with_no_positive_evidence):
+        adjusted_true_logits = np.delete(
+            true_logits, index_class_with_no_positive_evidence, 1
+        )
+        adjusted_pred_softmax = np.delete(
+            pred_softmax, index_class_with_no_positive_evidence, 1
+        )
+    else:
+        adjusted_true_logits = true_logits
+        adjusted_pred_softmax = pred_softmax
+
     # compute class metrics
     fpr, tpr, _ = roc_curve(
-        true_logits.argmax(axis=-1) + 1,
-        pred_softmax.argmax(axis=-1) + 1,
-        pos_label=np.unique(true_logits.argmax(axis=-1)).size,
+        adjusted_true_logits.argmax(axis=-1) + 1,
+        adjusted_pred_softmax.argmax(axis=-1) + 1,
+        pos_label=np.unique(adjusted_true_logits.argmax(axis=-1)).size,
     )
     summary_dict = {
-        "precision": TN / (FP + TN),
-        "recall": TP / (TP + FN),
-        "accuracy": (TP + TN) / (TP + TN + FP + FN),
-        "f1-score": TP / (TP + 0.5 * (FP + FN)),
+        "precision": np.insert(
+            (TN / (FP + TN)), index_class_with_no_positive_evidence, None
+        ),
+        "recall": np.insert(
+            (TP / (TP + FN)), index_class_with_no_positive_evidence, None
+        ),
+        "accuracy": np.insert(
+            ((TP + TN) / (TP + TN + FP + FN)),
+            index_class_with_no_positive_evidence,
+            None,
+        ),
+        "f1-score": np.insert(
+            (TP / (TP + 0.5 * (FP + FN))), index_class_with_no_positive_evidence, None
+        ),
         "auc": auc(fpr, tpr),
     }
 
     # compute overall metrics
     summary_dict["overall_precision"] = average_precision_score(
-        true_logits, pred_softmax, average=average
+        adjusted_true_logits, adjusted_pred_softmax, average=average
     )
+
     summary_dict["overall_recall"] = recall_score(
         np.argmax(true_logits, axis=-1),
         np.argmax(pred_softmax, axis=-1),
@@ -153,16 +180,11 @@ def get_performance_metrics(true_logits, pred_softmax, average="macro"):
         np.argmax(pred_softmax, axis=-1),
     )
     summary_dict["overall_f1-score"] = f1_score(
-        np.argmax(true_logits, axis=-1),
-        np.argmax(pred_softmax, axis=-1),
+        np.argmax(adjusted_true_logits, axis=-1),
+        np.argmax(adjusted_pred_softmax, axis=-1),
         average=average,
     )
-    # summary_dict["overall_auc"] = roc_auc_score(
-    #     true_logits,
-    #     pred_softmax,
-    #     average=average,
-    #     multi_class="ovr",
-    # )
+
     summary_dict["overall_auc"] = auc(fpr, tpr)
 
     summary_dict["matthews_correlation_coefficient"] = matthews_corrcoef(

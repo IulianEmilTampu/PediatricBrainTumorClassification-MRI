@@ -3,6 +3,7 @@
 https://github.com/jacobgil/pytorch-grad-cam/
 """
 import os
+import glob
 import pandas as pd
 import random
 import numpy as np
@@ -11,6 +12,7 @@ import matplotlib.pyplot as plt
 import cv2
 import pathlib
 import importlib
+from datetime import datetime
 import copy
 
 import torch
@@ -59,21 +61,61 @@ def reshape_transform(tensor, height=14, width=14):
     return result
 
 
-# %% GET PATH TO MODEL TO PLOT and some other settings
-# PATH_TO_MODEL_CKTP = pathlib.Path(
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231202/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.8_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t094044/REPETITION_1/TB_fold_1/last.pt"
-# )
+# %% PATHS
+PATH_TO_LOCAL_DATASET_CONFIGS = (
+    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/conf/dataset"
+)
+
+# collect paths to models from the given folder
+PATH_TO_TRAINED_MODELS = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208"
+# PATH_TO_MODELs_CKTP = [
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240112/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t115058/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240115/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t062515/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240115/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t115543/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240119/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t104038/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240119/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t032022/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240123/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t082212/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240127/ResNet50_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t200215/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ResNet50_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t154945/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t120839/REPETITION_5/TB_fold_3/last.pt",
+#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t155136/REPETITION_5/TB_fold_3/last.pt",
+# ]\
 
 
-PATH_TO_MODELs_CKTP = [
-    # "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t101847/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t131710/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ResNet50_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t105222/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t101659/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t131619/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.8_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t102501/REPETITION_1/TB_fold_1/last.pt",
-    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/TESTs_20231203/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_5e-06_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t105532/REPETITION_1/TB_fold_1/last.pt",
-]
+# settings
+SETS_TO_PLOT = ["training", "validation", "test"]
+USE_AUGMENTATION = False
+MR_MODALITY_TO_PLOT = "T2"
+REPETITION = 5
+FOLD = 3
+PATH_TO_MODELs_CKTP = []
+
+for mr_sequence_folder in glob.glob(os.path.join(PATH_TO_TRAINED_MODELS, "*", "")):
+    if MR_MODALITY_TO_PLOT in pathlib.Path(mr_sequence_folder).parts[-1]:
+        for m in glob.glob(os.path.join(mr_sequence_folder, "*", "")):
+            # for this model build path to the .pt file for the repetition and the fold specified
+            ckpt_path = os.path.join(
+                m, f"REPETITION_{REPETITION}", f"TB_fold_{FOLD}", "last.pt"
+            )
+            # check that the file exists
+            if not os.path.isfile(ckpt_path):
+                print(".pt file not found")
+            else:
+                # add the model to the list to process.
+                PATH_TO_MODELs_CKTP.append(ckpt_path)
+
+
+SAVE_PATH = os.path.join(
+    os.getcwd(),
+    "GradCAM_evaluation",
+    datetime.now().strftime("%Y%m%d"),
+    MR_MODALITY_TO_PLOT,
+    f"Augmentation_{USE_AUGMENTATION}",
+)
+pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
+
+# %% LOOP THROUGH ALL THE MODELS AND GET GRADCAMS
+
 for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
     PATH_TO_MODEL_CKTP = pathlib.Path(PATH_TO_MODEL_CKTP)
     FOLD_NAME = PATH_TO_MODEL_CKTP.parts[-2].replace("TB_", "")
@@ -93,10 +135,45 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
     IMG_STD_NORM = training_config.dataloader_settings.img_std
     USE_AGE = training_config.dataloader_settings.use_age
     USE_NORMALIZED_AGE = training_config.dataloader_settings.normalize_age
+    MODEL_NAME = pathlib.Path(PATH_TO_MODEL_CKTP).parts[-4]
 
-    # set which set to plot
-    SETS_TO_PLOT = ["training", "validation"]
-    USE_AUGMENTATION = True
+    # check if the model has been trained on a different machine.
+    # This will require changing the path to the files in the dataset_split.csv file
+    PATH_TO_DATASET_FROM_TRAINING = training_config.dataset.dataset_path
+    # check that this points to the local machine
+    flag_model_trained_on_a_different_machine = False
+    if not os.path.isdir(PATH_TO_DATASET_FROM_TRAINING):
+        flag_model_trained_on_a_different_machine = True
+        # need to change
+        classes_long_name_to_short = {
+            "ASTROCYTOMA": "ASTR",
+            "EPENDYMOMA": "EP",
+            "MEDULLOBLASTOMA": "MED",
+        }
+
+        classes_string = "_".join(
+            [
+                classes_long_name_to_short[c]
+                for c in list(training_config["dataset"]["classes_of_interest"])
+            ]
+        )
+        path_to_local_yaml_dataset_configuration_file = os.path.join(
+            PATH_TO_LOCAL_DATASET_CONFIGS,
+            "_".join(
+                [
+                    training_config.dataset.modality,
+                    training_config.dataset.name,
+                    classes_string,
+                ]
+            )
+            + ".yaml",
+        )
+        # load local.yaml and save local dataset path
+        local_dataset_config = OmegaConf.load(
+            path_to_local_yaml_dataset_configuration_file
+        )
+
+        local_dataset_path = local_dataset_config.dataset_path
 
     # %% LOAD MODEL
     net = torch.load(PATH_TO_MODEL_CKTP)
@@ -119,6 +196,16 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
         dataset_split = dataset_split.drop(columns=["level_0", "index"])
     except:
         pass
+
+    # fix dataset paths if the model has been trained on a different model
+    if flag_model_trained_on_a_different_machine:
+        dataset_split[f"file_path"] = dataset_split.apply(
+            lambda x: os.path.join(
+                local_dataset_path,
+                os.path.basename(x[f"file_path"]),
+            ),
+            axis=1,
+        )
 
     # define transforms
     train_transform = transforms.Compose(
@@ -150,14 +237,14 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
     for set_to_plot in SETS_TO_PLOT:
         print(f"Working on {set_to_plot} set ({MODEL_VERSION}, fold: {FOLD_NAME}).")
         # create save folder in the model repetition folder
-        SAVE_PATH = pathlib.Path(
+        save_path = pathlib.Path(
             os.path.join(
-                os.path.dirname(os.path.dirname(PATH_TO_MODEL_CKTP)),
-                "GradCAMs",
+                SAVE_PATH,
+                MODEL_NAME,
                 set_to_plot,
             )
         )
-        SAVE_PATH.mkdir(parents=True, exist_ok=True)
+        save_path.mkdir(parents=True, exist_ok=True)
 
         # create datagenerator for teh given set
         g = torch.Generator()
@@ -180,9 +267,11 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
                     as_torch_tensors=True,
                 ),
                 return_age=USE_AGE,
-                ages=list(samples["age_normalized"])
-                if USE_NORMALIZED_AGE
-                else list(samples["age_in_days"]),
+                ages=(
+                    list(samples["age_normalized"])
+                    if USE_NORMALIZED_AGE
+                    else list(samples["age_in_days"])
+                ),
             ),
             64,
             num_workers=15,
@@ -218,7 +307,7 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
         else:
             model_input = batch[0].to(device)
             images = batch[0]
-            labels = batch[0]
+            labels = batch[1]
         labels = torch.argmax(labels, axis=1).numpy()
 
         # get model predictions on this batch and print MCC and accuracy
@@ -296,7 +385,7 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
             # save
             plt.savefig(
                 fname=os.path.join(
-                    SAVE_PATH,
+                    save_path,
                     f"{FOLD_NAME}_{set_to_plot}_gradCAM_img_{idx_img:03d}.pdf",
                 ),
                 dpi=100,
@@ -305,7 +394,7 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
             )
             plt.savefig(
                 fname=os.path.join(
-                    SAVE_PATH,
+                    save_path,
                     f"{FOLD_NAME}_{set_to_plot}_gradCAM_img_{idx_img:03d}.png",
                 ),
                 dpi=100,

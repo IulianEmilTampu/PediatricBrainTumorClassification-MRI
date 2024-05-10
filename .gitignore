@@ -1,14 +1,8 @@
 __pycache__/
 .vscode
-data/
-loogging/
-resnet9.pth
 multirun/
 outputs/
 pretrained_models/
-saved_models/
-spectral_analysis/
 trained_model_archive/
-trained_model_archive_pre_AIDA_meeting/
-validation_results/
-visuals/
+pre_trained_models_archive/
+count_used_subjects_slices/

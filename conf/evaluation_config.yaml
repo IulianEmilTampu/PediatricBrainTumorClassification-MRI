@@ -1,20 +1,22 @@
 working_folder: null
-path_to_repetition_folders: /flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/trained_model_archive/T1_TESTs_20231208/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t093746
+path_to_repetition_folders: /flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240128/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t181432/
 save_path: null
 model_settings:
   path_to_cross_validation_folder:
   model_version: null
   session_time: null
   repetition_nbr: null
-dataloader_settings: 
+dataloader_settings:
   path_to_data_split_csv_file: null
-  set_to_evaluate: 'validation' # is can be training, validation, testing
+  set_to_evaluate: 'test' # is can be training, validation, testing
   use_age: null
   normalize_age: null
   preprocessing_settings: 
     input_size: null        
     img_mean: null
     img_std: null
+dataset_information: null
 resources: 
-  gpu_nbr: 0
-  nbr_workers: 15
+  gpu_nbr: 3
+  nbr_workers: 20
+path_to_dataset_configuration_files: '/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/conf/dataset' # this is needed to re-map the file paths if the models has been trained on a different machine.

@@ -8,6 +8,44 @@ import os
 import pandas as pd
 import numpy as np
 
+# %% UTILS
+
+
+def summarize_subject_tumor_location(list_of_locations):
+    # remove the spurious '/' and 'NAN
+    while "/" in list_of_locations:
+        list_of_locations.remove("/")
+    while "NAN" in list_of_locations:
+        list_of_locations.remove("NAN")
+    # remove spaces and only have unique values
+    list_of_locations = [v.replace(" ", "") for v in list_of_locations]
+    # make all lower case
+    list_of_locations = [v.lower() for v in list_of_locations]
+    list_of_locations = pd.unique(list_of_locations)
+    if len(list_of_locations) == 0:
+        return "NAN"
+    elif len(list_of_locations) == 1:
+        return list_of_locations[0]
+    # elif all([len(list_of_locations) == 1, any(['supra' in list_of_locations, 'supra ' in list_of_locations])]):
+    #     return 'supra'
+    # elif all([len(list_of_locations) == 1, any(['infra' in list_of_locations, 'infra ' in list_of_locations])]):
+    #     return 'infra'
+    elif all(
+        [
+            any(
+                [
+                    "infra" in list_of_locations,
+                    "infra " in list_of_locations,
+                ]
+            ),
+            any(["supra" in list_of_locations, "supra " in list_of_locations]),
+        ]
+    ):
+        return "both"
+    else:
+        return f"SOMETHING_WRONG_{list_of_locations}"
+
+
 # %% SOURCE FILES
 
 CLINICAL_INFORMATION = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/count_used_subjects_slices/CBTN_clinical_data_from_portal.xlsx"
@@ -30,10 +68,37 @@ summary_df = []
 for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.items():
     # load the split information
     split_information = pd.read_csv(split_information_file)
+    # add tumor location information from file name
+    split_information["tumor_location"] = split_information.apply(
+        lambda x: x.file_path.split("___")[1], axis=1
+    )
     # NOTE! Very important to order based on subject ID since unique and group by do not do that, thus the values are not aligned.
     split_information = split_information.sort_values(by=["subject_IDs"])
     # get the unique subject IDs
     unique_subjectIDs = list(pd.unique(split_information.subject_IDs))
+
+    # get locations combine file name information and excel file information
+    tumor_location = [
+        list(
+            pd.unique(
+                filter_preprocessing_file.loc[
+                    filter_preprocessing_file.subject_ID == sub
+                ]
+                .dropna(subset=["location"])
+                .location
+            )
+        )
+        + list(
+            pd.unique(
+                split_information.loc[
+                    split_information.subject_IDs == sub
+                ].tumor_location
+            )
+        )
+        for sub in unique_subjectIDs
+    ]
+
+    tumor_location = [summarize_subject_tumor_location(t) for t in tumor_location]
     # get slice count
     slices_per_subject = list(
         split_information.groupby(["subject_IDs"]).count()["file_path"]
@@ -60,7 +125,7 @@ for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.item
             gender[idx] = g[0]
         else:
             gender[idx] = "NaN"
-    # get age in days (this is the smales age in days among the age of this subject)
+    # get age in days (this is the smallest age in days among the age of this subject)
     age = list(
         split_information.groupby(["subject_IDs"]).apply(lambda x: min(x.age_in_days))
     )
@@ -72,6 +137,7 @@ for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.item
             gender,
             age,
             diagnosis,
+            tumor_location,
             slices_per_subject,
             [modality_name] * len(unique_subjectIDs),
         ]
@@ -81,6 +147,7 @@ for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.item
         "gender",
         "age_in_days",
         "diagnosis",
+        "tumor_location",
         "nbr_slices",
         "mr_sequence",
     ]
@@ -89,6 +156,49 @@ for modality_name, split_information_file in PER_MODALITY_SPLIT_INFORMATION.item
     summary_df.append(df)
 
 summary_df = pd.concat(summary_df)
+
+# refine tumor location since in some cases ADC is one and T2 is another.
+summary_df["tumor_location"] = summary_df.apply(
+    lambda x: (
+        "both"
+        if any(
+            [
+                "both"
+                in list(
+                    pd.unique(
+                        summary_df.loc[
+                            summary_df.subject_IDs == x.subject_IDs
+                        ].tumor_location
+                    )
+                ),
+                all(
+                    [
+                        "supra"
+                        in list(
+                            pd.unique(
+                                summary_df.loc[
+                                    summary_df.subject_IDs == x.subject_IDs
+                                ].tumor_location
+                            )
+                        ),
+                        "infra"
+                        in list(
+                            pd.unique(
+                                summary_df.loc[
+                                    summary_df.subject_IDs == x.subject_IDs
+                                ].tumor_location
+                            )
+                        ),
+                    ]
+                ),
+            ]
+        )
+        else x.tumor_location
+    ),
+    axis=1,
+)
+
+# %%
 
 # %% COUNT
 # DIAGNOSTIC LEVEL FIRST
@@ -104,6 +214,14 @@ for diagnosis in ["ASTROCYTOMA", "EPENDYMOMA", "MEDULLOBLASTOMA"]:
         gender_count[0],
         gender_count[2] if len(gender_count) == 3 else 0,
     )
+    location_count = df.groupby(["tumor_location"]).nunique()["subject_IDs"]
+    supra = (
+        location_count["supra"] if "supra" in list(location_count.index.values) else 0
+    )
+    infra = (
+        location_count["infra"] if "infra" in list(location_count.index.values) else 0
+    )
+    both = location_count["both"] if "both" in list(location_count.index.values) else 0
     age_median, age_min, age_max, age_mean, age_std = (
         np.median(df.age_in_days) / 365,
         np.min(df.age_in_days) / 365,
@@ -115,7 +233,7 @@ for diagnosis in ["ASTROCYTOMA", "EPENDYMOMA", "MEDULLOBLASTOMA"]:
     print(f"{diagnosis}")
     indent = 4
     print(
-        f"{' '*indent:s}{nbr_subjects} subjects. (M/F/NA) {'/'.join([str(v) for v in [males, females, NAs]])}"
+        f"{' '*indent:s}{nbr_subjects} subjects. (M/F/NA) {'/'.join([str(v) for v in [males, females, NAs]])}. (INFRA/SUPRA/BOTH) {'/'.join([str(v) for v in [infra, supra, both]])}"
     )
     print(
         f"{' '*indent:s}Age: (median [min, max]): {age_median:0.2f} [{age_min:0.2f}, {age_max:0.2f}]"
@@ -129,11 +247,35 @@ for diagnosis in ["ASTROCYTOMA", "EPENDYMOMA", "MEDULLOBLASTOMA"]:
         df_seq = df.loc[df.mr_sequence == mr_sequence]
         nbr_subjects_sequence = len(pd.unique(df_seq.subject_IDs))
         nbr_slices = np.sum(df_seq.nbr_slices)
-        print(f"{' '*indent:s}{nbr_subjects_sequence} subjects")
-        print(f"{' '*indent:s}{nbr_slices} slices")
+
+        location_count = df_seq.groupby(["tumor_location"]).nunique()["subject_IDs"]
+        sub_supra = (
+            location_count["supra"]
+            if "supra" in list(location_count.index.values)
+            else 0
+        )
+        sub_infra = (
+            location_count["infra"]
+            if "infra" in list(location_count.index.values)
+            else 0
+        )
+        sub_both = (
+            location_count["both"] if "both" in list(location_count.index.values) else 0
+        )
+
+        slices_infra = np.sum(df_seq.loc[df_seq.tumor_location == "infra"].nbr_slices)
+        slices_supra = np.sum(df_seq.loc[df_seq.tumor_location == "supra"].nbr_slices)
+        slices_both = np.sum(df_seq.loc[df_seq.tumor_location == "both"].nbr_slices)
+
+        nbr_slices = np.sum(df_seq.nbr_slices)
+        print(
+            f"{' '*indent:s}{nbr_subjects_sequence} subjects. (INFRA/SUPRA/BOTH) {'/'.join([str(v) for v in [sub_infra, sub_supra, sub_both]])}"
+        )
+        print(
+            f"{' '*indent:s}{nbr_slices} slices. (INFRA/SUPRA/BOTH) {'/'.join([str(v) for v in [slices_infra, slices_supra, slices_both]])}"
+        )
 
     print("\n")
-
 
 # %% PRINT TOTALS
 print("\nTOTALS")

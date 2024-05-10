@@ -6,18 +6,79 @@ from omegaconf import OmegaConf
 import pathlib
 from datetime import datetime
 
-# %%
+# %% PATHS
 SOURCE = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208"
-SAVE_PATH = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/validation_results"
+SAVE_PATH = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/evaluation_results"
 SAVE_PATH = os.path.join(SAVE_PATH, f'Evaluation_{datetime.now().strftime("%Y%m%d")}')
 pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
+
+# %% CHECK IF THERE ARE MODELS THAT HAVE NOT BEEN EVALUATED
+
+evaluation_set = "test"
+models_without_evaluation = []
+models_with_evaluation = []
+
+for m in glob.glob(os.path.join(SOURCE, "*", "")):
+    for t in glob.glob(os.path.join(m, "*", "")):
+        repetition_flags = []
+        for r in glob.glob(os.path.join(t, "REPETITION_*", "")):
+            # check if this is a 3 class classification problem
+            training_config = OmegaConf.load(os.path.join(r, "hydra_config.yaml"))
+            if len(list(training_config.dataset.classes_of_interest)) == 3:
+                # check if there is an evaluation folder for this set
+                evaluation_folder = os.path.join(
+                    r, "evaluation_results", evaluation_set, ""
+                )
+                if not os.path.isdir(evaluation_folder):
+                    repetition_flags.append(False)
+                else:
+                    # check that the summary_performance.csv file is present
+                    evaluation_summary_file = os.path.join(
+                        evaluation_folder, "summary_performance.csv"
+                    )
+                    if not os.path.isfile(evaluation_summary_file):
+                        repetition_flags.append(False)
+
+                    else:
+                        repetition_flags.append(True)
+            else:
+                continue
+        # if any of the repetitions is missing a summary file, flag the model
+        if all(repetition_flags):
+            models_with_evaluation.append(t)
+        else:
+            models_without_evaluation.append(t)
+
+# print findings
+print(f"Found {len(models_without_evaluation)} models without evaluation.")
+print(f"Found {len(models_with_evaluation)} models with evaluation.")
+
+print("\n")
+print(f"Path of models without evaluation:\n")
+for f in models_without_evaluation:
+    parts = pathlib.Path(f).parts
+    # print(f"{parts[-2]}: {parts[-1]}")
+    print(f)
+
+
+print("\n")
+print(f"Path of models with evaluation:\n")
+for f in models_with_evaluation:
+    parts = pathlib.Path(f).parts
+    print(f"{parts[-2]}: {parts[-1]}")
 
 # %% GATHER CVS FILES (summary evaluation and detailed evaluation)
 summary_evaluation = []
 detailed_evaluation = []
 count = 0
+model_count = 0
 for m in glob.glob(os.path.join(SOURCE, "*", "")):
     for t in glob.glob(os.path.join(m, "*", "")):
+        model_count += 1
+        print(
+            f"Gathering from model {model_count}/{len(models_with_evaluation)}\r",
+            end="",
+        )
         for r in glob.glob(os.path.join(t, "REPETITION_*", "")):
             # load configuration file
             training_config = OmegaConf.load(os.path.join(r, "hydra_config.yaml"))
@@ -38,9 +99,9 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                             df["mr_sequence"] = training_config.dataset.modality
                             df["evaluation_set"] = set_name
 
-                            df[
-                                "model_version"
-                            ] = training_config.model_settings.model_version
+                            df["model_version"] = (
+                                training_config.model_settings.model_version
+                            )
 
                             df["use_age"] = (
                                 training_config.dataloader_settings.use_age
@@ -58,9 +119,9 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                                 ).split("_")[-1]
                             )
 
-                            df[
-                                "time_stamp"
-                            ] = training_config.logging_settings.start_time
+                            df["time_stamp"] = (
+                                training_config.logging_settings.start_time
+                            )
 
                             df["pretraining"] = (
                                 training_config.model_settings.use_SimCLR_pretrained_model
@@ -78,9 +139,9 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                                 in training_config.model_settings.keys()
                                 else None
                             )
-                            df[
-                                "fine_tuning"
-                            ] = training_config.model_settings.percentage_freeze_weights
+                            df["fine_tuning"] = (
+                                training_config.model_settings.percentage_freeze_weights
+                            )
                             df["repetition"] = int(
                                 os.path.basename(pathlib.Path(r)).split("_")[-1]
                             )
@@ -101,6 +162,16 @@ for m in glob.glob(os.path.join(SOURCE, "*", "")):
                                 in training_config.model_settings.keys()
                                 else 0
                             )
+                            # # split the performance (precision, recall, f1-score) for each class into separate columns
+                            # if version == "summary_performance.csv":
+                            #     for p in ["precision", "recall", "f1-score"]:
+                            #         for idx, c in enumerate(
+                            #             list(
+                            #                 training_config.dataset.classes_of_interest
+                            #             )
+                            #         ):
+                            #             df["_".join([p, c])] = df[p][idx]
+
                             aggregadion.append(df)
                             count += 1
                         else:
@@ -146,6 +217,7 @@ df.to_csv(
     os.path.join(SAVE_PATH, f"summary_evaluation_aggregated.csv"),
     index=False,
     index_label=False,
+    sep=";",
 )
 
 # and the fulle evaliation
@@ -203,5 +275,6 @@ df.to_csv(
     os.path.join(SAVE_PATH, f"detailed_evaluation_aggregated.csv"),
     index=False,
     index_label=False,
+    sep=";",
 )
 # %%

@@ -8,10 +8,14 @@ import pandas as pd
 import random
 import numpy as np
 import PIL
+from PIL import Image
+from PIL import ImageFont
+from PIL import ImageDraw
 import matplotlib.pyplot as plt
 import cv2
 import pathlib
 import importlib
+from matplotlib import cm
 from datetime import datetime
 import copy
 
@@ -40,10 +44,10 @@ from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
 from pytorch_grad_cam.utils.image import show_cam_on_image
 
 # local imports
-import model_bucket_CBTN_v1
-import dataset_utilities
+import core_utils.model_utilities
+import core_utils.dataset_utilities
 
-os.environ["CUDA_VISIBLE_DEVICES"] = str(3)
+os.environ["CUDA_VISIBLE_DEVICES"] = str(1)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
@@ -68,22 +72,10 @@ PATH_TO_LOCAL_DATASET_CONFIGS = (
 
 # collect paths to models from the given folder
 PATH_TO_TRAINED_MODELS = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208"
-# PATH_TO_MODELs_CKTP = [
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240112/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t115058/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240115/ResNet50_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t062515/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240115/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t115543/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240119/ResNet50_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t104038/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240119/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t032022/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240123/ViT_b_16_pretrained_True_ImageNet_dataset_ImageNet_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t082212/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240127/ResNet50_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t200215/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ResNet50_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t154945/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t120839/REPETITION_5/TB_fold_3/last.pt",
-#     "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20241024/ViT_b_16_pretrained_True_SimCLR_dataset_TCGA_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_False_t155136/REPETITION_5/TB_fold_3/last.pt",
-# ]\
-
 
 # settings
-SETS_TO_PLOT = ["training", "validation", "test"]
+# SETS_TO_PLOT = ["training", "validation", "test"]
+SETS_TO_PLOT = ["test"]
 USE_AUGMENTATION = False
 MR_MODALITY_TO_PLOT = "T2"
 REPETITION = 5
@@ -102,8 +94,13 @@ for mr_sequence_folder in glob.glob(os.path.join(PATH_TO_TRAINED_MODELS, "*", ""
                 print(".pt file not found")
             else:
                 # add the model to the list to process.
-                PATH_TO_MODELs_CKTP.append(ckpt_path)
+                # just process ViT models
+                if "ViT_b_16" in m:
+                    PATH_TO_MODELs_CKTP.append(ckpt_path)
 
+PATH_TO_MODELs_CKTP = [
+    "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/train_model_archive_POST_20231208/ADC_TESTs_20240128/ViT_b_16_pretrained_True_SimCLR_dataset_CBTN_frozen_True_0.5_LR_1e-05_BATCH_128_AUGMENTATION_True_OPTIM_adam_SCHEDULER_exponential_MLPNODES_0_useAge_True_t023358/REPETITION_5/TB_fold_3/last.pt"
+]
 
 SAVE_PATH = os.path.join(
     os.getcwd(),
@@ -188,6 +185,42 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
         else:
             net = net.model.to(device)
 
+    # %% TESTING THINGS
+    # import timm
+    # from timm.models.layers import PatchEmbed
+
+    # from torchvision.models.feature_extraction import get_graph_node_names
+    # from pprint import pprint
+
+    # model = torch.load(PATH_TO_MODEL_CKTP)
+    # model = model.model.to(device)
+    # nodes, _ = get_graph_node_names(model, tracer_kwargs={"leaf_modules": [PatchEmbed]})
+    # pprint(nodes)
+
+    # from torchvision.models.feature_extraction import create_feature_extractor
+
+    # N = 11
+
+    # # This is the "one line of code" that does what you want
+    # feature_extractor = create_feature_extractor(
+    #     model,
+    #     return_nodes=[f"model.encoder.layers.encoder_layer_{N}.self_attention"],
+    #     tracer_kwargs={"leaf_modules": [PatchEmbed]},
+    # )
+
+    # with torch.no_grad():
+    #     out = feature_extractor(model_input[0])
+
+    # print(out[f"model.encoder.layers.encoder_layer_{N}.self_attention"][0].shape)
+
+    # attn_output = out[f"model.encoder.layers.encoder_layer_{N}.self_attention"][0][0]
+    # attn_output_weights = out[f"model.encoder.layers.encoder_layer_{N}.self_attention"][
+    #     0
+    # ][1]
+
+    # print("Attention output", attn_output.shape)
+    # print("Attention weights", attn_output_weights.shape)
+
     # %% LOOP THROUGH ALL THE SETS_TO_PLOT
     # load the datasetsplit .csv file
     importlib.reload(dataset_utilities)
@@ -255,6 +288,37 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
             & (dataset_split["target"].isin(CLASSES_TO_USE))
         ]
         print(f"   Nbr. {set_to_plot} files: {len(samples)}")
+
+        # fix the missing age normalizad values for the test set
+        if np.isnan(list(samples["age_normalized"])[0]):
+            print("Fixing normalized age in the testing set...")
+            # retrieve the age in days from the file name
+            test_ages = np.array(samples["age_in_days"])
+            # get the mean and std deviation from the training cases in this fold
+            train_ages = np.array(
+                dataset_split.loc[dataset_split[f"fold_{FOLD}"] == "training"][
+                    "age_in_days"
+                ]
+            )
+            age_mean = np.mean(
+                train_ages[
+                    np.logical_and(
+                        train_ages > np.percentile(train_ages, 0.5),
+                        train_ages <= np.percentile(train_ages, 99.5),
+                    )
+                ]
+            )
+            age_std = np.std(
+                train_ages[
+                    np.logical_and(
+                        train_ages > np.percentile(train_ages, 0.5),
+                        train_ages <= np.percentile(train_ages, 99.5),
+                    )
+                ]
+            )
+            # normalize and save age values
+            test_ages_normalized = (test_ages - age_mean) / age_std
+            samples.loc[:, "age_normalized"] = test_ages_normalized.tolist()
 
         sample_dataloader = DataLoader(
             dataset_utilities.PNGDatasetFromFolder(
@@ -332,8 +396,12 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
         )
 
         # compute GradCAM for all the images in the batch
+        targets = [ClassifierOutputTarget(c) for c in list(y_)]
         grayscale_cam = cam(
-            input_tensor=model_input, targets=None, aug_smooth=False, eigen_smooth=False
+            input_tensor=model_input,
+            targets=targets,
+            aug_smooth=False,
+            eigen_smooth=True,
         )
 
         # ## PLOT and SAVE gradcams
@@ -359,10 +427,26 @@ for PATH_TO_MODEL_CKTP in PATH_TO_MODELs_CKTP:
                 g_images_rgb = g_images_rgb * np.array(IMG_MEAN_NORM) + np.array(
                     IMG_STD_NORM
                 )
-                # un-normalize (undo T.ToTensor)
+                # bring in [0,1]
                 g_images_rgb = (g_images_rgb - g_images_rgb.min()) / (
                     g_images_rgb.max() - g_images_rgb.min()
                 )
+
+                # # add label to the image (G=ground truth and P=prediction)
+                # img = PIL.Image.fromarray(
+                #     np.uint8(cm.gist_earth(g_images_rgb[:, :, 0]) * 255)
+                # )
+                # text = f"G:{labels[i]:01d}, P:{y_[i]:01d}"
+                # draw = ImageDraw.Draw(img)
+                # font = ImageFont.truetype(
+                #     "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf", 20
+                # )
+                # draw.text((0, 0), text, (255, 255, 255), font=font)
+                # # convert back
+                # g_images_rgb = np.array(img, dtype=np.float32)[:, :, 0] / 255
+                # g_images_rgb = np.transpose(
+                #     np.stack([g_images_rgb, g_images_rgb, g_images_rgb]), (1, 2, 0)
+                # )
 
                 visualization = show_cam_on_image(
                     g_images_rgb, c_iamges[i], use_rgb=True

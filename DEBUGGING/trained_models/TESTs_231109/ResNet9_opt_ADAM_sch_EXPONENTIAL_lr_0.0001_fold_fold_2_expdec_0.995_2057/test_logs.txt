@@ -1,4 +1,0 @@
-Accuracy of the network on the test images: 62 %
-MCC of the network on the test images: 0.11168932140588952
-Accuracy for class: G2    is 35.9 %
-Accuracy for class: G4    is 74.6 %

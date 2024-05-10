@@ -31,7 +31,7 @@ from scipy import stats
 import itertools
 
 # %% IMPORT SUMMARY FILE
-SUMMARY_FILE_PATH = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/evaluation_results/Evaluation_20240205/summary_evaluation_aggregated.csv"
+SUMMARY_FILE_PATH = "/flush2/iulta54/Code/P5-PediatricBrainTumorClassification_CBTN_v1/evaluation_results/Evaluation_20240212/summary_evaluation_aggregated.csv"
 SAVE_PATH = pathlib.Path(
     os.path.join(os.path.dirname(SUMMARY_FILE_PATH), "Summary_statistical_analysis")
 )
@@ -384,11 +384,13 @@ for s, s_values in significant_test_analysis_summary_of_the_summary.items():
 for s in significant_test_analysis_summary:
     print(s)
 
-# # save to file
-# summary_file = os.path.join(SAVE_PATH, f"Statistical_analysis_ResNet50_vs_ViTb16.txt")
-# with open(summary_file, "w") as f:
-#     for line in significant_test_analysis_summary:
-#         f.write(f"{line}\n")
+# save to file
+summary_file = os.path.join(
+    SAVE_PATH, f"Statistical_analysis_comparison_pre_training.txt"
+)
+with open(summary_file, "w") as f:
+    for line in significant_test_analysis_summary:
+        f.write(f"{line}\n")
 
 # %% ResNet50 vs ViT_b_16
 # SUBJECT WISE COMPARISON BETWEEN TWO MODELS ON THE SAME DATA. HERE WE WILL USE THE NON-PARAMETRIC
@@ -711,3 +713,5 @@ summary_file = os.path.join(
 with open(summary_file, "w") as f:
     for line in significant_test_analysis_summary:
         f.write(f"{line}\n")
+
+# %%

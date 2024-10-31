@@ -1,32 +1,9 @@
 # %%
 """
-Script that given the path to the CBTM_v2 radiology and histopatology dataset, scrapes the dataset and saved the information into a CSV file.
+Script that given the path to the CBTM radiology dataset, scrapes the dataset and saves the information into a CSV file.
+## Radiology
 
-There are a couple of values that are important to count:
-- number of radiology subjects
-- number of histopathology subjects
-- number of overlapping subjects
-
-- number of sessions (pre operative and post operative)
-- number of volumes for each MR modality
-
-To accoplish this, the script needs to scrape the radiology and the histopathology datasets together.
-The radiology dataset also contains a .json file for each MR acquisition. A utility can be implemented to read this and take out the needed infromation.
-
-
-CBTN_v2 data size
-    1.0 TiB [############] /LGG_v2
-  323.9 GiB [###         ] /Medullo_v2
-  178.4 GiB [##          ] /HGG_v2
-  141.7 GiB [#           ] /Ependymoma_v2
-   85.3 GiB [#           ] /Craniopharyngioma_v2
-   76.8 GiB [            ] /ATRT_v2
-   22.5 GiB [            ] /DIPG_v2
-
-
-   ## Radiology
-
-Count to be able to answer the following questions:
+After scraping, Should to be able to answer the following questions:
 
 - [ ]  how many patients (male, female, age)
 - [ ]  how many sessions (pre-op)
@@ -35,24 +12,11 @@ Count to be able to answer the following questions:
 - [ ]  what mean resolution does the different MR sequences have
 - [ ]  from how many scanners was the data collected
 
-## Histology
-
-Count to be able to answer these questions:
-
-- [ ]  how many patients (male, female, age)
-- [ ]  how many sessions
-- [ ]  how many stains available
-- [ ]  how many of each stain available
-- [ ]  how many scanners
-- [ ]  which resolution each scan (and magnification)
-
-The ultimate way to store the information is in a database that we can query. But is might take time, so for now we do it the usual excel way. Several excel tables will be created:
+The ultimate way to store the information is in a database that we can query. But is might take time, so for now we do it the usual Excel way. Several Excel tables will be created:
 
 1. Subject level information (ID, diagnosis_folder, disgnosis_clinical_file, gender, age, survival, free_survival, nbr_sessions, has_T1w, has_T1wGD, has_T2w, was_FLAIR, has_ADC, has_HandE, has_NameOtherHistologyStains)
 2. Session level radiology information (subject ID, session_ID, has_T1w, has_T1wGD, has_T2w, was_FLAIR, has_ADC)
 3. File level radiology information (subject ID, session_ID, MR_sequence_type, 2D_or_3D, resolution_x, resolution_y, resolution_x, orientation, scanner)
-4. Session level histology (subject ID, session_ID, has_NameOfStainings)
-5. File level histopathology (subject ID, session_ID, staining_type, magnification,resolution_x, resolution_y, scanner…)
 
 STEPS
 We build the information for each subject top-down, going from the clinical files, the available radiology and histology sessions and the files.
@@ -82,19 +46,19 @@ from dataset_scraping_utilities import (
 )
 
 # %% DEFINE PATHS
-RADIOLOGY_DATASET_PATH = "/run/media/iulta54/Expansion/Datasets/CBTN_v2/RADIOLOGY"
+RADIOLOGY_DATASET_PATH = "../CBTN/RADIOLOGY"
 
-CLINICAL_FILE_FROM_PORTAL_PATH = "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/CBTN_clinical_data_from_portal.xlsx"
-BIOSPECIMEN_FILE_FROM_PORTAL_PATH = "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/CBNT_biospecimenData_from_portal.xlsx"
+CLINICAL_FILE_FROM_PORTAL_PATH = "../CBTN_clinical_data_from_portal.xlsx"
+BIOSPECIMEN_FILE_FROM_PORTAL_PATH = "../CBNT_biospecimenData_from_portal.xlsx"
 
 CLINICAL_FILES_PATHS = {
-    "ATRT": "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/ATRT_clinical_information.xlsx",
-    "DIPG": "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/DIPG_clinical_information.xlsx",
-    "LGG": "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/LGG_clinical_information.xlsx",
-    "MEDULLO": "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES/Medullo_clinical_information.xlsx",
+    "ATRT": "../ATRT_clinical_information.xlsx",
+    "DIPG": "../DIPG_clinical_information.xlsx",
+    "LGG": "../LGG_clinical_information.xlsx",
+    "MEDULLO": "../Medullo_clinical_information.xlsx",
 }
 
-SAVE_PATH = "/run/media/iulta54/Expansion/Datasets/CBTN_v2/SUMMARY_FILES"
+SAVE_PATH = ""
 
 # %% GET UNIQUE SUBJECT IDs FROM THE RADIOLOGY DATASET FOLDER
 
@@ -135,8 +99,8 @@ for tumor_type, folder_name in tumor_types.items():
 # %% OPEN CLINICAL FILES (both the ones for each tumor and the ones from the portal)
 """
 The files from the portal should cover all the subject IDs available in the radiology folders.
-Thus we use these as starting point to gather the information from every subject. The information from the portal
-files are integrated with the ones specific for each tumor (if the tumor type and subject is available). 
+Thus we use these as starting points to gather the information from every subject. The information from the portal
+files is integrated with the ones specific to each tumor (if the tumor type and subject are available). 
 """
 
 # open the files (just open)

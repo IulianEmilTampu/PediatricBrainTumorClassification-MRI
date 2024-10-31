@@ -21,7 +21,7 @@ Summary Deep learning-based classification of pediatric brain tumors can be achi
 **Key highlights:**
 
 - **The vision transformer model** pre-trained on ImageNet and fine-tuned on ADC data with age fusion achieved the highest performance, which was significantly better than models trained on T2w (second-best) and T1w-Gd data.
-- **Fusion of age information** with the image data marginally improved classification, and model architecture (ResNet50 -vs -ViT) and pre-training strategies (supervised -vs -self-supervised) did not show to significantly impact models’ performance.
+- **Fusion of age information** with the image data marginally improved classification, and model architecture (ResNet50 -vs -ViT) and pre-training strategies (supervised -vs -self-supervised) did not show to significant impact on models’ performance.
 - **Model explainability**, by means of class activation mapping and principal component analysis of the learned feature space, show that the models use the tumor region information for classification and that the tumor type clusters are better separated when using age information.
 
 ## Table of Contents
@@ -39,8 +39,8 @@ TODO.
 The dataset used for this project was obtained from [CBTN](https://cbtn.org/). 
 
 ## Code structure
-Model pretraining, fine tuning and evaluation are run using .py scripts using hydra configuration files. The configuration files for contrastive pretraining (``SimCLR_config.yaml``), model classification training (``config.yaml``) and evaluation (``evaluation_config.yaml``) can be found in the conf folder. 
-Additionally, configuration files specifying the dataset settings are available in the config/dataset folder. See the different configuration files for all the availabe tunable settings for model pretraining and classification training.
+Model pretraining, fine-tuning and evaluation are run using .py scripts using hydra configuration files. The configuration files for contrastive pretraining (``SimCLR_config.yaml``), model classification training (``config.yaml``) and evaluation (``evaluation_config.yaml``) can be found in the conf folder. 
+Additionally, configuration files specifying the dataset settings are available in the config/dataset folder. See the different configuration files for all the available tunable settings for model pretraining and classification training.
 
 ## Usage
 - **Model pretraining**: model pretraining is run though the ``run_SimCLR_preptraining.py`` script which is configured with the ``SimCLR_config.yaml`` configuration file. After setting the appropriate paths in the configuration file, run the code below for model pretraining:
@@ -51,9 +51,9 @@ python3 run_SimCLR_pretraining.py
 ```bash 
 python3 run_classification_training.py
 ```
-- **Model evaluation**: model evaluation can be obtained using the ``run_model_evaluate.py`` script, which is configured using (``evaluation_config.yaml``). This scripts generats a tabular .csv file which can be aggregated accross several classification model configurations using the ``aggregate_evaluation_csv_files.py`` script. 
+- **Model evaluation**: model evaluation can be obtained using the ``run_model_evaluate.py`` script, which is configured using (``evaluation_config.yaml``). This script generates a tabular .csv file which can be aggregated across several classification model configurations using the ``aggregate_evaluation_csv_files.py`` script. 
 A summary of the test evaluation can be printed on display using the ``print_aggregated_evaluation_summary.py`` and plots of the different metrics can be obtained using ``plot_aggregated_evaluation_summary.py``.
-- **Grad-CAMs**: model explainability maps thourgh Grad-CAM can be obtained using the ``apply_gradCam.py`` script. See the comments in the script on how to set the different model and dataset paths.
+- **Grad-CAMs**: model explainability maps through Grad-CAM can be obtained using the ``apply_gradCam.py`` script. See the comments in the script on how to set the different model and dataset paths.
 
 ## Reference
 If you use this work, please cite:
@@ -61,17 +61,12 @@ If you use this work, please cite:
 ```bibtex
 @misc{tampu_pediatric_2024,
 	title = {Pediatric brain tumor classification using deep learning on {MR}-images with age fusion},
-	copyright = {© 2024, Posted by Cold Spring Harbor Laboratory. This pre-print is available under a Creative Commons License (Attribution 4.0 International), CC BY 4.0, as described at http://creativecommons.org/licenses/by/4.0/},
 	url = {https://www.medrxiv.org/content/10.1101/2024.09.05.24313109v1},
 	doi = {10.1101/2024.09.05.24313109},
-	language = {en},
-	urldate = {2024-10-31},
 	publisher = {medRxiv},
 	author = {Tampu, Iulian Emil and Bianchessi, Tamara and Blystad, Ida and Lundberg, Peter and Nyman, Per and Eklund, Anders and Haj-Hosseini, Neda},
 	month = sep,
 	year = {2024},
-	note = {Pages: 2024.09.05.24313109},
-	file = {Full Text PDF:/Users/iulta54/Zotero/storage/RI2K3Z8K/Tampu et al. - 2024 - Pediatric brain tumor classification using deep learning on MR-images with age fusion.pdf:application/pdf},
 }
 ```
 

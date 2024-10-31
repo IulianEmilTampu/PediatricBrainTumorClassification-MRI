@@ -261,16 +261,16 @@ def get_diagnosis_folder(base_dataset_path, subjectID):
 # %% DEFINE PATH
 
 SUMMARY_FILES_RAW = (
-    "/flush/iulta54/Research/P9-Cross_modal_data_fusion/not_for_git/SUMMARY_IMAGES"
+    "../SUMMARY_IMAGES" # path to the folder containing the per-modality corrections after manual check
 )
-SUMMARY_FILES_CORRECTIONS = "/flush/iulta54/Research/P9-Cross_modal_data_fusion/not_for_git/SUMMARY_FILES_CORRECTIONS/MODALITIES"
+SUMMARY_FILES_CORRECTIONS = "../SUMMARY_FILES_CORRECTIONS/MODALITIES" # path to the folder containing the per-modality corrections after manual check
 
-PATH_TO_SUMMARY_CSV = "/run/media/iulta54/Expansion1/Datasets/CBTN_v2/SUMMARY_FILES/radiology_per_file_scraped_data.csv"
-BASE_DATASET_PATH = "/run/media/iulta54/Expansion1/Datasets/CBTN_v2/RADIOLOGY"
+PATH_TO_SUMMARY_CSV = "../radiology_per_file_scraped_data.csv"
+BASE_DATASET_PATH = "../CBTN/RADIOLOGY"
 
 date_time = datetime.now()
 d = date_time.strftime("t%H%M_d%m%d%Y")
-SAVE_PATH = f"/run/media/iulta54/Expansion1/Datasets/CBTN_v2/RADIOLOGY_PER_MODALITY_FOR_PRE_PROCESSING_{d}"
+SAVE_PATH = f""
 pathlib.Path(SAVE_PATH).mkdir(parents=True, exist_ok=True)
 
 # %% OPEN SUMMARY FILE

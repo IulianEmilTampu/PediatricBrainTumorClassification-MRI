@@ -9,11 +9,11 @@ This repository contains code to support the study of deep learning-based classi
 
 - **The vision transformer model** pre-trained on ImageNet and fine-tuned on ADC data with age fusion achieved the highest performance, which was significantly better than models trained on T2w (second-best) and T1w-Gd data.
 - **Fusion of age information** with the image data marginally improved classification, and model architecture (ResNet50 -vs -ViT) and pre-training strategies (supervised -vs -self-supervised) did not show to significant impact on models’ performance.
-- **Model explainability**, by means of class activation mapping and principal component analysis of the learned feature space, show that the models use the tumor region information for classification and that the tumor type clusters are better separated when using age information.
+- **Model explainability**, using class activation mapping and principal component analysis of the learned feature space, shows that the models use the tumor region information for classification and that the tumor type clusters are better separated when using age information.
 
 **Abstract**
 
-Purpose:To implement and evaluate deep learning-based methods for the classification of pediatric brain tumors in MR data.
+Purpose: To implement and evaluate deep learning-based methods for the classification of pediatric brain tumors in MR data.
 
 Materials and methods: A subset of the “Children’s Brain Tumor Network” dataset was retrospectively used (n=178 subjects, female=72, male=102, NA=4, age-range [0.01, 36.49] years) with tumor types being low-grade astrocytoma (n=84), ependymoma (n=32), and medulloblastoma (n=62). T1w post-contrast (n=94 subjects), T2w (n=160 subjects), and ADC (n=66 subjects) MR sequences were used separately. Two deep-learning models were trained on transversal slices showing tumor. Joint fusion was implemented to combine image and age data, and two pre-training paradigms were utilized. Model explainability was investigated using gradient-weighted class activation mapping (Grad-CAM), and the learned feature space was visualized using principal component analysis (PCA).
 
@@ -34,8 +34,12 @@ TODO.
 
 ## Dataset
 The dataset used for this project was obtained from [CBTN](https://cbtn.org/). 
+Once the dataset is downloaded, use the ``scrape_dataset.py`` script to get information about the MR volumes included in the dataset. This script produces a tabular .csv file with information about the volume sizes and resolution, the MR sequence and the associated tumor diagnosis. 
+Note that manual refinement of the tabular information is needed especially for the MR sequence tags and pre/post operative categorization. 
+When a pool of data is selected for analysis, it can be preprocessed using the ``data_preprocessing.py`` script, which performs bias field correction, isotropically resampling, brain extraction and z-score normalization. The brain extraction is performed using the HDBET utility. For instructions on how to install and use this tool see https://github.com/MIC-DKFZ/HD-BET. For detailed instructions on how to use the scraping and preprocessing scripts, see the comments in each script. 
 
 ## Code structure
+Dataset scraping and preprocessing scripts are available in the dataset_preprocessing folder. 
 Model pretraining, fine-tuning and evaluation are run using .py scripts using hydra configuration files. The configuration files for contrastive pretraining (``SimCLR_config.yaml``), model classification training (``config.yaml``) and evaluation (``evaluation_config.yaml``) can be found in the conf folder. 
 Additionally, configuration files specifying the dataset settings are available in the config/dataset folder. See the different configuration files for all the available tunable settings for model pretraining and classification training.
 
